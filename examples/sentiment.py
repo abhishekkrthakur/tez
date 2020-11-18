@@ -1,0 +1,126 @@
+import pandas as pd
+import tez
+import torch
+import torch.nn as nn
+import transformers
+import numpy as np
+from sklearn import metrics
+from sklearn import model_selection
+from transformers import AdamW, get_linear_schedule_with_warmup
+
+
+class BERTDataset:
+    def __init__(self, review, target):
+        self.review = review
+        self.target = target
+        self.tokenizer = transformers.BertTokenizer.from_pretrained(
+            "bert-base-uncased", do_lower_case=True
+        )
+        self.max_len = 64
+
+    def __len__(self):
+        return len(self.review)
+
+    def __getitem__(self, item):
+        review = str(self.review[item])
+        review = " ".join(review.split())
+
+        inputs = self.tokenizer.encode_plus(
+            review,
+            None,
+            add_special_tokens=True,
+            max_length=self.max_len,
+            padding="max_length",
+            truncation=True,
+        )
+
+        ids = inputs["input_ids"]
+        mask = inputs["attention_mask"]
+        token_type_ids = inputs["token_type_ids"]
+
+        return {
+            "ids": torch.tensor(ids, dtype=torch.long),
+            "mask": torch.tensor(mask, dtype=torch.long),
+            "token_type_ids": torch.tensor(token_type_ids, dtype=torch.long),
+            "targets": torch.tensor(self.target[item], dtype=torch.float),
+        }
+
+
+class BERTBaseUncased(tez.Model):
+    def __init__(self, num_train_steps):
+        super().__init__()
+        self.num_train_steps = num_train_steps
+        self.tokenizer = transformers.BertTokenizer.from_pretrained(
+            "bert-base-uncased", do_lower_case=True
+        )
+        self.bert = transformers.BertModel.from_pretrained("bert-base-uncased")
+        self.bert_drop = nn.Dropout(0.3)
+        self.out = nn.Linear(768, 1)
+
+    def monitor_metrics(self, outputs, targets):
+        outputs = np.array(outputs) >= 0.5
+        accuracy = metrics.accuracy_score(targets, outputs)
+        return accuracy
+
+    def loss(self, outputs, targets):
+        if targets is None:
+            return None
+        return nn.BCEWithLogitsLoss()(outputs, targets.view(-1, 1))
+
+    def create_scheduler(self, step_after="batch"):
+        super().create_scheduler(step_after)
+        scheduler = get_linear_schedule_with_warmup(
+            self.optimizer, num_warmup_steps=0, num_training_steps=self.num_train_steps
+        )
+        return scheduler
+
+    def create_optimizer(self):
+        param_optimizer = list(self.named_parameters())
+        no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+        optimizer_parameters = [
+            {
+                "params": [
+                    p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": 0.001,
+            },
+            {
+                "params": [
+                    p for n, p in param_optimizer if any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": 0.0,
+            },
+        ]
+        opt = AdamW(optimizer_parameters, lr=3e-5)
+        return opt
+
+    def forward(self, ids, mask, token_type_ids, targets=None):
+        _, o_2 = self.bert(ids, attention_mask=mask, token_type_ids=token_type_ids)
+        b_o = self.bert_drop(o_2)
+        output = self.out(b_o)
+        loss = self.loss(output, targets)
+        return output, loss
+
+
+if __name__ == "__main__":
+    dfx = pd.read_csv("/home/abhishek/datasets/imdb.csv").fillna("none")
+    dfx.sentiment = dfx.sentiment.apply(lambda x: 1 if x == "positive" else 0)
+
+    df_train, df_valid = model_selection.train_test_split(
+        dfx, test_size=0.1, random_state=42, stratify=dfx.sentiment.values
+    )
+
+    df_train = df_train.reset_index(drop=True)
+    df_valid = df_valid.reset_index(drop=True)
+
+    train_dataset = BERTDataset(
+        review=df_train.review.values, target=df_train.sentiment.values
+    )
+
+    valid_dataset = BERTDataset(
+        review=df_valid.review.values, target=df_valid.sentiment.values
+    )
+
+    ntrain_steps = int(len(df_train) / 16 * 10)
+    model = BERTBaseUncased(num_train_steps=ntrain_steps)
+    model.fit(train_dataset, valid_dataset, device="cuda", epochs=10)

@@ -1,4 +1,4 @@
-from setuptools import Extension, find_packages, setup
+from setuptools import find_packages, setup
 
 with open("README.md") as f:
     long_description = f.read()
@@ -7,8 +7,8 @@ with open("README.md") as f:
 if __name__ == "__main__":
     setup(
         name="tez",
-        version="0.0.1",
-        description="tez - train NLP models faster...",
+        version="0.0.2",
+        description="tez - train pytorch models faster...",
         long_description=long_description,
         long_description_content_type="text/markdown",
         author="Abhishek Thakur",
@@ -17,7 +17,7 @@ if __name__ == "__main__":
         license="MIT License",
         packages=find_packages(),
         include_package_data=True,
-        install_requires=["transformers>=3.5.0"],
+        install_requires=["torch>=1.6.0"],
         platforms=["linux", "unix"],
         python_requires=">3.5.2",
     )
