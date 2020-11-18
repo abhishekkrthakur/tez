@@ -1,5 +1,6 @@
 # local stuff
 .vscode/
+examples/.logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

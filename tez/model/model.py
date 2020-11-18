@@ -1,9 +1,7 @@
-from abc import ABC, abstractmethod
-
 import psutil
 import torch
 import torch.nn as nn
-
+from tez.logging import TensorBoardLogger
 from tez.utils import AverageMeter
 from tqdm import tqdm
 
@@ -16,19 +14,18 @@ class Model(nn.Module):
         self.train_loader = None
         self.valid_loader = None
         self.step_scheduler_after = None
-        self.metrics = None
-
-    def monitor_metrics(self, outputs, targets, *args, **kwargs):
-        if outputs is None:
-            return None
-        if targets is None:
-            return None
-        return None
+        self.tb_logger = TensorBoardLogger()
+        self.current_epoch = 0
+        self.current_train_step = 0
+        self.current_valid_step = 0
 
     def create_scheduler(self, step_after, *args, **kwargs):
         if step_after not in ("batch", "epoch"):
             raise Exception("step parameter should be either batch or epoch")
         self.step_scheduler_after = step_after
+
+    def monitor_metrics(self, *args, **kwargs):
+        return
 
     def create_optimizer(self, *args, **kwargs):
         return
@@ -40,45 +37,76 @@ class Model(nn.Module):
         return super().__init__(*args, **kwargs)
 
     def train_one_step(self, data, device):
+        self.optimizer.zero_grad()
         for key, value in data.items():
             data[key] = value.to(device)
-        _, loss = self(**data)
-        return loss
+        _, loss, metrics = self(**data)
+        with torch.set_grad_enabled(True):
+            loss.backward()
+            self.optimizer.step()
+            if self.scheduler:
+                if self.step_scheduler_after == "batch":
+                    self.scheduler.step()
+        return loss, metrics
 
     def validate_one_step(self, data, device):
         for key, value in data.items():
             data[key] = value.to(device)
-        _, loss = self(**data)
-        return loss
+        _, loss, metrics = self(**data)
+        return loss, metrics
+
+    def log_metrics(self, prefix, losses, monitor, step):
+        self.tb_logger.log(f"{prefix}/loss", losses.avg, step)
+        for met in monitor:
+            self.tb_logger.log(f"{prefix}/{met}", monitor[met], step)
 
     def train_one_epoch(self, data_loader, device):
         self.train()
         losses = AverageMeter()
         tk0 = tqdm(data_loader, total=len(data_loader))
-        for data in tk0:
-            self.optimizer.zero_grad()
-            loss = self.train_one_step(data, device)
-            with torch.set_grad_enabled(True):
-                loss.backward()
-                self.optimizer.step()
-                if self.scheduler:
-                    if self.step_scheduler_after == "batch":
-                        self.scheduler.step()
+        for b_idx, data in enumerate(tk0):
+            loss, metrics = self.train_one_step(data, device)
             losses.update(loss.item(), data_loader.batch_size)
-            tk0.set_postfix(loss=losses.avg, stage="train")
+            if b_idx == 0:
+                metrics_meter = {k: AverageMeter() for k in metrics}
+            monitor = {}
+            for m_m in metrics_meter:
+                metrics_meter[m_m].update(metrics[m_m], data_loader.batch_size)
+                monitor[m_m] = metrics_meter[m_m].avg
+            self.current_train_step += 1
+            tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
         tk0.close()
+        self.log_metrics(
+            prefix="train",
+            losses=losses,
+            monitor=monitor,
+            step=self.current_epoch,
+        )
         return losses.avg
 
     def validate_one_epoch(self, data_loader, device):
         self.eval()
         losses = AverageMeter()
         tk0 = tqdm(data_loader, total=len(data_loader))
-        for data in tk0:
+        for b_idx, data in enumerate(tk0):
             with torch.no_grad():
-                loss = self.train_one_step(data, device)
+                loss, metrics = self.validate_one_step(data, device)
             losses.update(loss.item(), data_loader.batch_size)
-            tk0.set_postfix(loss=losses.avg, stage="valid")
+            if b_idx == 0:
+                metrics_meter = {k: AverageMeter() for k in metrics}
+            monitor = {}
+            for m_m in metrics_meter:
+                metrics_meter[m_m].update(metrics[m_m], data_loader.batch_size)
+                monitor[m_m] = metrics_meter[m_m].avg
+            tk0.set_postfix(loss=losses.avg, stage="valid", **monitor)
+            self.current_valid_step += 1
         tk0.close()
+        self.log_metrics(
+            prefix="valid",
+            losses=losses,
+            monitor=monitor,
+            step=self.current_epoch,
+        )
         return losses.avg
 
     def fit(
@@ -122,3 +150,4 @@ class Model(nn.Module):
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
                     self.scheduler.step()
+            self.current_epoch += 1

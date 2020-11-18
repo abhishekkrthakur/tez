@@ -3,9 +3,7 @@ import tez
 import torch
 import torch.nn as nn
 import transformers
-import numpy as np
-from sklearn import metrics
-from sklearn import model_selection
+from sklearn import metrics, model_selection
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 
@@ -58,9 +56,12 @@ class BERTBaseUncased(tez.Model):
         self.out = nn.Linear(768, 1)
 
     def monitor_metrics(self, outputs, targets):
-        outputs = np.array(outputs) >= 0.5
+        if targets is None:
+            return {}
+        outputs = torch.sigmoid(outputs).cpu().detach().numpy() >= 0.5
+        targets = targets.cpu().detach().numpy()
         accuracy = metrics.accuracy_score(targets, outputs)
-        return accuracy
+        return {"accuracy": accuracy}
 
     def loss(self, outputs, targets):
         if targets is None:
@@ -99,11 +100,12 @@ class BERTBaseUncased(tez.Model):
         b_o = self.bert_drop(o_2)
         output = self.out(b_o)
         loss = self.loss(output, targets)
-        return output, loss
+        acc = self.monitor_metrics(output, targets)
+        return output, loss, acc
 
 
 if __name__ == "__main__":
-    dfx = pd.read_csv("/home/abhishek/datasets/imdb.csv").fillna("none")
+    dfx = pd.read_csv("/home/abhishek/datasets/imdb.csv", nrows=2000).fillna("none")
     dfx.sentiment = dfx.sentiment.apply(lambda x: 1 if x == "positive" else 0)
 
     df_train, df_valid = model_selection.train_test_split(
@@ -121,6 +123,6 @@ if __name__ == "__main__":
         review=df_valid.review.values, target=df_valid.sentiment.values
     )
 
-    ntrain_steps = int(len(df_train) / 16 * 10)
+    ntrain_steps = int(len(df_train) / 32 * 10)
     model = BERTBaseUncased(num_train_steps=ntrain_steps)
-    model.fit(train_dataset, valid_dataset, device="cuda", epochs=10)
+    model.fit(train_dataset, valid_dataset, train_bs=32, device="cuda", epochs=10)
