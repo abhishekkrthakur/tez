@@ -14,7 +14,7 @@ if __name__ == "__main__":
         author="Abhishek Thakur",
         author_email="abhishek4@gmail.com",
         url="https://github.com/abhishekkrthakur/tez",
-        license="MIT License",
+        license="Apache License",
         packages=find_packages(),
         include_package_data=True,
         install_requires=["torch>=1.6.0"],

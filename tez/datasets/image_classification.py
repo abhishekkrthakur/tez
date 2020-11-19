@@ -9,7 +9,7 @@ from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-class ImageClassification:
+class ImageDataset:
     def __init__(
         self,
         image_paths,

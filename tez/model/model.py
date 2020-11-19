@@ -1,9 +1,10 @@
 import psutil
 import torch
 import torch.nn as nn
-from tez.logging import TensorBoardLogger
 from tez.utils import AverageMeter
-from tqdm import tqdm
+from tqdm.auto import tqdm
+from tez import enums
+from tez.callbacks import CallbackRunner
 
 
 class Model(nn.Module):
@@ -14,10 +15,73 @@ class Model(nn.Module):
         self.train_loader = None
         self.valid_loader = None
         self.step_scheduler_after = None
-        self.tb_logger = TensorBoardLogger()
         self.current_epoch = 0
         self.current_train_step = 0
         self.current_valid_step = 0
+        self._model_state = None
+        self._train_state = None
+        self._callback_runner = None
+        self.metrics = {}
+        self.metrics["train"] = {}
+        self.metrics["valid"] = {}
+        self.metrics["test"] = {}
+
+    @property
+    def model_state(self):
+        return self._model_state
+
+    @model_state.setter
+    def model_state(self, value):
+        self._model_state = value
+        # run something here in future if needed
+
+    @property
+    def train_state(self):
+        return self._train_state
+
+    @train_state.setter
+    def train_state(self, value):
+        self._train_state = value
+        if self._callback_runner is not None:
+            self._callback_runner(value)
+
+    def _init_model(
+        self,
+        device,
+        train_dataset,
+        valid_dataset,
+        train_bs,
+        valid_bs,
+        n_jobs,
+        callbacks,
+    ):
+
+        if callbacks is None:
+            callbacks = list()
+
+        if n_jobs == -1:
+            n_jobs = psutil.cpu_count()
+
+        if next(self.parameters()).device != device:
+            self.to(device)
+
+        if self.optimizer is None:
+            self.optimizer = self.create_optimizer()
+
+        if self.scheduler is None:
+            self.scheduler = self.create_scheduler()
+
+        if self.train_loader is None:
+            self.train_loader = torch.utils.data.DataLoader(
+                train_dataset, batch_size=train_bs, num_workers=n_jobs
+            )
+        if self.valid_loader is None:
+            if valid_dataset is not None:
+                self.valid_loader = torch.utils.data.DataLoader(
+                    valid_dataset, batch_size=valid_bs, num_workers=n_jobs
+                )
+        self._callback_runner = CallbackRunner(callbacks, self)
+        self.train_state = enums.TrainingState.TRAIN_START
 
     def create_scheduler(self, step_after, *args, **kwargs):
         if step_after not in ("batch", "epoch"):
@@ -55,17 +119,19 @@ class Model(nn.Module):
         _, loss, metrics = self(**data)
         return loss, metrics
 
-    def log_metrics(self, prefix, losses, monitor, step):
-        self.tb_logger.log(f"{prefix}/loss", losses.avg, step)
-        for met in monitor:
-            self.tb_logger.log(f"{prefix}/{met}", monitor[met], step)
+    def update_metrics(self, losses, monitor):
+        self.metrics[self._model_state.value].update(monitor)
+        self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def train_one_epoch(self, data_loader, device):
         self.train()
+        self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
         tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
+            self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_one_step(data, device)
+            self.train_state = enums.TrainingState.TRAIN_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
                 metrics_meter = {k: AverageMeter() for k in metrics}
@@ -76,21 +142,19 @@ class Model(nn.Module):
             self.current_train_step += 1
             tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
         tk0.close()
-        self.log_metrics(
-            prefix="train",
-            losses=losses,
-            monitor=monitor,
-            step=self.current_epoch,
-        )
+        self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
     def validate_one_epoch(self, data_loader, device):
         self.eval()
+        self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
         tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
+            self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.validate_one_step(data, device)
+            self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
                 metrics_meter = {k: AverageMeter() for k in metrics}
@@ -101,12 +165,7 @@ class Model(nn.Module):
             tk0.set_postfix(loss=losses.avg, stage="valid", **monitor)
             self.current_valid_step += 1
         tk0.close()
-        self.log_metrics(
-            prefix="valid",
-            losses=losses,
-            monitor=monitor,
-            step=self.current_epoch,
-        )
+        self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
     def fit(
@@ -118,36 +177,29 @@ class Model(nn.Module):
         train_bs=16,
         valid_bs=16,
         n_jobs=8,
+        callbacks=None,
     ):
-
-        if n_jobs == -1:
-            n_jobs = psutil.cpu_count()
-
-        if next(self.parameters()).device != device:
-            self.to(device)
-
-        if self.optimizer is None:
-            self.optimizer = self.create_optimizer()
-
-        if self.scheduler is None:
-            self.scheduler = self.create_scheduler()
-
-        if self.train_loader is None:
-            self.train_loader = torch.utils.data.DataLoader(
-                train_dataset, batch_size=train_bs, num_workers=n_jobs
-            )
-        if self.valid_loader is None:
-            if valid_dataset is not None:
-                self.valid_loader = torch.utils.data.DataLoader(
-                    valid_dataset, batch_size=valid_bs, num_workers=n_jobs
-                )
+        self._init_model(
+            device=device,
+            train_dataset=train_dataset,
+            valid_dataset=valid_dataset,
+            train_bs=train_bs,
+            valid_bs=valid_bs,
+            n_jobs=n_jobs,
+            callbacks=callbacks,
+        )
 
         for _ in range(epochs):
+            self.train_state = enums.TrainingState.TRAIN_EPOCH_START
             train_loss = self.train_one_epoch(self.train_loader, device)
+            self.train_state = enums.TrainingState.TRAIN_EPOCH_END
             if self.valid_loader:
+                self.train_state = enums.TrainingState.VALID_EPOCH_START
                 valid_loss = self.validate_one_epoch(self.valid_loader, device)
+                self.train_state = enums.TrainingState.VALID_EPOCH_END
 
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
                     self.scheduler.step()
             self.current_epoch += 1
+        self.train_state = enums.TrainingState.TRAIN_END

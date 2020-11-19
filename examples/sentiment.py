@@ -125,4 +125,12 @@ if __name__ == "__main__":
 
     ntrain_steps = int(len(df_train) / 32 * 10)
     model = BERTBaseUncased(num_train_steps=ntrain_steps)
-    model.fit(train_dataset, valid_dataset, train_bs=32, device="cuda", epochs=10)
+    tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
+    model.fit(
+        train_dataset,
+        valid_dataset,
+        train_bs=32,
+        device="cuda",
+        epochs=10,
+        callbacks=[tb_logger],
+    )
