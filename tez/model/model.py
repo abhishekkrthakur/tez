@@ -21,6 +21,8 @@ class Model(nn.Module):
         self._model_state = None
         self._train_state = None
         self._callback_runner = None
+        self.fp16 = False
+        self.scaler = None
         self.metrics = {}
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
@@ -54,6 +56,7 @@ class Model(nn.Module):
         valid_bs,
         n_jobs,
         callbacks,
+        fp16,
     ):
 
         if callbacks is None:
@@ -80,6 +83,11 @@ class Model(nn.Module):
                 self.valid_loader = torch.utils.data.DataLoader(
                     valid_dataset, batch_size=valid_bs, num_workers=n_jobs
                 )
+
+        self.fp16 = fp16
+        if self.fp16:
+            self.scaler = torch.cuda.amp.GradScaler()
+
         self._callback_runner = CallbackRunner(callbacks, self)
         self.train_state = enums.TrainingState.TRAIN_START
 
@@ -104,10 +112,20 @@ class Model(nn.Module):
         self.optimizer.zero_grad()
         for key, value in data.items():
             data[key] = value.to(device)
-        _, loss, metrics = self(**data)
+        if self.fp16:
+            with torch.cuda.amp.autocast():
+                _, loss, metrics = self(**data)
+        else:
+            _, loss, metrics = self(**data)
         with torch.set_grad_enabled(True):
-            loss.backward()
-            self.optimizer.step()
+            if self.fp16:
+                with torch.cuda.amp.autocast():
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
             if self.scheduler:
                 if self.step_scheduler_after == "batch":
                     self.scheduler.step()
@@ -178,7 +196,14 @@ class Model(nn.Module):
         valid_bs=16,
         n_jobs=8,
         callbacks=None,
+        fp16=False,
     ):
+        """
+        When using fp16, you must wrap loss calculation with the following
+
+        with torch.cuda.amp.autocast():
+            loss = model(data)
+        """
         self._init_model(
             device=device,
             train_dataset=train_dataset,
@@ -187,6 +212,7 @@ class Model(nn.Module):
             valid_bs=valid_bs,
             n_jobs=n_jobs,
             callbacks=callbacks,
+            fp16=fp16,
         )
 
         for _ in range(epochs):

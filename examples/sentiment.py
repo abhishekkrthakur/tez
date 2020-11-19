@@ -133,4 +133,5 @@ if __name__ == "__main__":
         device="cuda",
         epochs=10,
         callbacks=[tb_logger],
+        fp16=True,
     )
