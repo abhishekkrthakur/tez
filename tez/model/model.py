@@ -227,12 +227,6 @@ class Model(nn.Module):
         callbacks=None,
         fp16=False,
     ):
-        """
-        When using fp16, you must wrap loss calculation with the following
-
-        with torch.cuda.amp.autocast():
-            loss = model(data)
-        """
         self._init_model(
             device=device,
             train_dataset=train_dataset,
