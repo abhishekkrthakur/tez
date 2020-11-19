@@ -1,12 +1,12 @@
-# tez: Train PyTorch Models Fasterrrr.....
+# tez: train pytorch models fasterrrrr.......
 
-*NOTE:* Currently, we are not accepting any pull requests! All PRs will be closed. If you want a feature or something doesn't work, please create an issue.
+**NOTE:** Currently, we are not accepting any pull requests! All PRs will be closed. If you want a feature or something doesn't work, please create an issue.
 
 tez (तेज़ / تیز) means sharp, fast & active. This is a simple, to-the-point, library to make your pytorch training easy.
 
-*Note:* This library is in very early-stage currently! So, there might be breaking changes.
+**Note:** This library is in very early-stage currently! So, there might be breaking changes.
 
-Idea around tez is simple:
+### Idea around tez is simple:
 
 - keep things as simple as possible
 - make it as customizable as possible
@@ -18,7 +18,7 @@ Currently, tez supports cpu and gpu training. More coming soon!
 
 Using tez is super-easy. We don't want you to be far away from pytorch. So, you do everything on your own and just use tez to make a few things simpler.
 
-Training using Tez:
+### Training using Tez:
 
 - To train a model, define a dataset and model. The dataset class is the same old class you would write when writing pytorch models.
 
