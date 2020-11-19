@@ -186,6 +186,27 @@ class Model(nn.Module):
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
+    def save(self, model_path, optimizer_path=None, scheduler_path=None):
+        model_state_dict = self.state_dict()
+        torch.save(model_state_dict, model_path)
+        if optimizer_path:
+            opt_state_dict = self.optimizer.state_dict()
+            torch.save(opt_state_dict, optimizer_path)
+        if scheduler_path:
+            sch_state_dict = self.scheduler.state_dict()
+            torch.save(sch_state_dict, scheduler_path)
+
+    def load(self, model_path, optimizer_path=None, scheduler_path=None, device="cuda"):
+        if next(self.parameters()).device != device:
+            self.to(device)
+        self.load_state_dict(torch.load(model_path, map_location=device))
+        if optimizer_path:
+            self.optimizer = self.create_optimizer()
+            self.optimizer.load_state_dict(torch.load(optimizer_path))
+        if scheduler_path:
+            self.scheduler = self.create_scheduler()
+            self.scheduler.load_state_dict(torch.load(scheduler_path))
+
     def fit(
         self,
         train_dataset,
