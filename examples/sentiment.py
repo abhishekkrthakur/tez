@@ -125,15 +125,16 @@ if __name__ == "__main__":
 
     ntrain_steps = int(len(df_train) / 32 * 10)
     model = BERTBaseUncased(num_train_steps=ntrain_steps)
-    model.load("model.bin", "opt.bin", "sch.bin")
+    # model.load("model.bin")
     tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
+    es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
     model.fit(
         train_dataset,
         valid_dataset,
         train_bs=32,
         device="cuda",
-        epochs=3,
-        callbacks=[tb_logger],
+        epochs=50,
+        callbacks=[tb_logger, es],
         fp16=True,
     )
-    model.save("model.bin", "opt.bin", "sch.bin")
+    model.save("model.bin")

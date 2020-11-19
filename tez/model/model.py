@@ -1,10 +1,14 @@
+import warnings
+
 import psutil
 import torch
 import torch.nn as nn
-from tez.utils import AverageMeter
-from tqdm.auto import tqdm
 from tez import enums
 from tez.callbacks import CallbackRunner
+from tez.utils import AverageMeter
+from tqdm.auto import tqdm
+
+warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WARNING)
 
 
 class Model(nn.Module):
@@ -186,26 +190,30 @@ class Model(nn.Module):
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
-    def save(self, model_path, optimizer_path=None, scheduler_path=None):
+    def save(self, model_path):
         model_state_dict = self.state_dict()
-        torch.save(model_state_dict, model_path)
-        if optimizer_path:
-            opt_state_dict = self.optimizer.state_dict()
-            torch.save(opt_state_dict, optimizer_path)
-        if scheduler_path:
-            sch_state_dict = self.scheduler.state_dict()
-            torch.save(sch_state_dict, scheduler_path)
+        opt_state_dict = self.optimizer.state_dict()
+        sch_state_dict = self.scheduler.state_dict()
+        model_dict = {}
+        model_dict["state_dict"] = model_state_dict
+        model_dict["optimizer"] = opt_state_dict
+        model_dict["scheduler"] = sch_state_dict
+        model_dict["epoch"] = self.current_epoch
+        model_dict["fp16"] = self.fp16
+        torch.save(model_dict, model_path)
 
-    def load(self, model_path, optimizer_path=None, scheduler_path=None, device="cuda"):
+    def load(self, model_path, device="cuda"):
         if next(self.parameters()).device != device:
             self.to(device)
-        self.load_state_dict(torch.load(model_path, map_location=device))
-        if optimizer_path:
-            self.optimizer = self.create_optimizer()
-            self.optimizer.load_state_dict(torch.load(optimizer_path))
-        if scheduler_path:
-            self.scheduler = self.create_scheduler()
-            self.scheduler.load_state_dict(torch.load(scheduler_path))
+
+        model_dict = torch.load(model_path)
+        self.load_state_dict(model_dict["state_dict"])
+
+        self.optimizer = self.create_optimizer()
+        self.optimizer.load_state_dict(model_dict["optimizer"])
+
+        self.scheduler = self.create_scheduler()
+        self.scheduler.load_state_dict(model_dict["scheduler"])
 
     def fit(
         self,
@@ -237,6 +245,7 @@ class Model(nn.Module):
         )
 
         for _ in range(epochs):
+            self.train_state = enums.TrainingState.EPOCH_START
             self.train_state = enums.TrainingState.TRAIN_EPOCH_START
             train_loss = self.train_one_epoch(self.train_loader, device)
             self.train_state = enums.TrainingState.TRAIN_EPOCH_END
@@ -244,9 +253,11 @@ class Model(nn.Module):
                 self.train_state = enums.TrainingState.VALID_EPOCH_START
                 valid_loss = self.validate_one_epoch(self.valid_loader, device)
                 self.train_state = enums.TrainingState.VALID_EPOCH_END
-
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
                     self.scheduler.step()
+            self.train_state = enums.TrainingState.EPOCH_END
+            if self._model_state.value == "end":
+                break
             self.current_epoch += 1
         self.train_state = enums.TrainingState.TRAIN_END

@@ -2,6 +2,12 @@ from typing import List, Tuple
 
 
 class Callback:
+    def on_epoch_start(self, model, **kwargs):
+        return
+
+    def on_epoch_end(self, model, **kwargs):
+        return
+
     def on_train_epoch_start(self, model, **kwargs):
         return
 
