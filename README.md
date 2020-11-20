@@ -40,28 +40,13 @@ class MyModel(tez.Model):
         accuracy = metrics.accuracy_score(targets, outputs)
         return {"accuracy": accuracy}
 
-    def loss(self, outputs, targets):
-        if targets is None:
-            return None
-        return nn.BCEWithLogitsLoss()(outputs, targets.view(-1, 1))
-
-    def create_scheduler(self, step_after="batch"):
-        scheduler = get_linear_schedule_with_warmup(
-            self.optimizer, num_warmup_steps=0, num_training_steps=self.num_train_steps
-        )
-        return scheduler
-
-    def create_optimizer(self):    
-        opt = AdamW(self.parameters(), lr=3e-5)
-        return opt
-
     def forward(self, ids, mask, token_type_ids, targets=None):
         _, o_2 = self.bert(ids, attention_mask=mask, token_type_ids=token_type_ids)
         b_o = self.bert_drop(o_2)
         output = self.out(b_o)
 
         # calculate loss here
-        loss = self.loss(output, targets)
+        loss = nn.BCEWithLogitsLoss()(output, targets)
 
         # calculate the metric dictionary here
         metric_dict = self.monitor_metrics(output, targets)
@@ -80,6 +65,13 @@ valid_dataset = SomeValidDataset()
 # init model
 model = MyModel()
 
+# optimizer
+optimizer = 
+
+# scheduler
+scheduler = 
+
+
 # init callbacks, you can also write your own callback
 tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
 es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
@@ -87,7 +79,10 @@ es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
 # train model. a familiar api!
 model.fit(
     train_dataset,
-    valid_dataset,
+    optimizer,
+    scheduler,
+    step_scheduler_after="batch",
+    valid_dataset=valid_dataset,
     train_bs=32,
     device="cuda",
     epochs=50,

@@ -55,6 +55,9 @@ class Model(nn.Module):
         self,
         device,
         train_dataset,
+        optimizer,
+        scheduler,
+        step_scheduler_after,
         valid_dataset,
         train_bs,
         valid_bs,
@@ -72,11 +75,9 @@ class Model(nn.Module):
         if next(self.parameters()).device != device:
             self.to(device)
 
-        if self.optimizer is None:
-            self.optimizer = self.create_optimizer()
-
-        if self.scheduler is None:
-            self.scheduler = self.create_scheduler()
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.step_scheduler_after = step_scheduler_after
 
         if self.train_loader is None:
             self.train_loader = torch.utils.data.DataLoader(
@@ -94,11 +95,6 @@ class Model(nn.Module):
 
         self._callback_runner = CallbackRunner(callbacks, self)
         self.train_state = enums.TrainingState.TRAIN_START
-
-    def create_scheduler(self, step_after, *args, **kwargs):
-        if step_after not in ("batch", "epoch"):
-            raise Exception("step parameter should be either batch or epoch")
-        self.step_scheduler_after = step_after
 
     def monitor_metrics(self, *args, **kwargs):
         return
@@ -205,19 +201,15 @@ class Model(nn.Module):
     def load(self, model_path, device="cuda"):
         if next(self.parameters()).device != device:
             self.to(device)
-
         model_dict = torch.load(model_path)
         self.load_state_dict(model_dict["state_dict"])
-
-        self.optimizer = self.create_optimizer()
-        self.optimizer.load_state_dict(model_dict["optimizer"])
-
-        self.scheduler = self.create_scheduler()
-        self.scheduler.load_state_dict(model_dict["scheduler"])
 
     def fit(
         self,
         train_dataset,
+        optimizer,
+        scheduler,
+        step_scheduler_after,
         valid_dataset=None,
         device="cuda",
         epochs=10,
@@ -230,6 +222,9 @@ class Model(nn.Module):
         self._init_model(
             device=device,
             train_dataset=train_dataset,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            step_scheduler_after=step_scheduler_after,
             valid_dataset=valid_dataset,
             train_bs=train_bs,
             valid_bs=valid_bs,
