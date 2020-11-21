@@ -45,7 +45,7 @@ class BERTDataset:
 
 
 class BERTBaseUncased(tez.Model):
-    def __init__(self):
+    def __init__(self, num_train_steps):
         super().__init__()
         self.tokenizer = transformers.BertTokenizer.from_pretrained(
             "bert-base-uncased", do_lower_case=True
@@ -53,6 +53,39 @@ class BERTBaseUncased(tez.Model):
         self.bert = transformers.BertModel.from_pretrained("bert-base-uncased")
         self.bert_drop = nn.Dropout(0.3)
         self.out = nn.Linear(768, 1)
+        self.num_train_steps = num_train_steps
+        self.step_scheduler_after = "batch"
+
+    def fetch_optimizer(self):
+        param_optimizer = list(self.named_parameters())
+        no_decay = ["bias", "LayerNorm.bias"]
+        optimizer_parameters = [
+            {
+                "params": [
+                    p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": 0.001,
+            },
+            {
+                "params": [
+                    p for n, p in param_optimizer if any(nd in n for nd in no_decay)
+                ],
+                "weight_decay": 0.0,
+            },
+        ]
+        opt = AdamW(optimizer_parameters, lr=3e-5)
+        return opt
+
+    def fetch_scheduler(self):
+        sch = get_linear_schedule_with_warmup(
+            self.optimizer, num_warmup_steps=0, num_training_steps=self.num_train_steps
+        )
+        return sch
+
+    def loss(self, outputs, targets):
+        if targets is None:
+            return None
+        return nn.BCEWithLogitsLoss()(outputs, targets.view(-1, 1))
 
     def monitor_metrics(self, outputs, targets):
         if targets is None:
@@ -66,7 +99,7 @@ class BERTBaseUncased(tez.Model):
         _, o_2 = self.bert(ids, attention_mask=mask, token_type_ids=token_type_ids)
         b_o = self.bert_drop(o_2)
         output = self.out(b_o)
-        loss = nn.BCEWithLogitsLoss()(output, targets.view(-1, 1))
+        loss = self.loss(output, targets)
         acc = self.monitor_metrics(output, targets)
         return output, loss, acc
 
@@ -90,39 +123,14 @@ if __name__ == "__main__":
         review=df_valid.review.values, target=df_valid.sentiment.values
     )
 
-    model = BERTBaseUncased()
-
-    param_optimizer = list(model.named_parameters())
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-    optimizer_parameters = [
-        {
-            "params": [
-                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.001,
-        },
-        {
-            "params": [
-                p for n, p in param_optimizer if any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.0,
-        },
-    ]
-    optimizer = AdamW(optimizer_parameters, lr=3e-5)
-
-    num_train_steps = int(len(df_train) / 32 * 10)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=0, num_training_steps=num_train_steps
-    )
+    n_train_steps = int(len(df_train) / 32 * 10)
+    model = BERTBaseUncased(num_train_steps=n_train_steps)
 
     # model.load("model.bin")
     tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
     es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
     model.fit(
         train_dataset,
-        optimizer,
-        scheduler,
-        step_scheduler_after="batch",
         valid_dataset=valid_dataset,
         train_bs=32,
         device="cuda",
