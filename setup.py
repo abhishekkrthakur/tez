@@ -7,7 +7,7 @@ with open("README.md") as f:
 if __name__ == "__main__":
     setup(
         name="tez",
-        version="0.0.2",
+        version="0.0.3",
         description="tez - train pytorch models faster...",
         long_description=long_description,
         long_description_content_type="text/markdown",
