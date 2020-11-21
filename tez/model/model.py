@@ -139,6 +139,12 @@ class Model(nn.Module):
         _, loss, metrics = self(**data)
         return loss, metrics
 
+    def predict_one_step(self, data, device):
+        for key, value in data.items():
+            data[key] = value.to(device)
+        output, _, _ = self(**data)
+        return output
+
     def update_metrics(self, losses, monitor):
         self.metrics[self._model_state.value].update(monitor)
         self.metrics[self._model_state.value]["loss"] = losses.avg
@@ -187,6 +193,31 @@ class Model(nn.Module):
         tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
+
+    def process_output(self, output):
+        output = output.cpu().detach().numpy()
+        return output
+
+    def predict(self, dataset, batch_size, n_jobs, device):
+        if next(self.parameters()).device != device:
+            self.to(device)
+
+        if n_jobs == -1:
+            n_jobs = psutil.cpu_count()
+
+        data_loader = torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, num_workers=n_jobs
+        )
+        self.eval()
+        final_output = []
+        tk0 = tqdm(data_loader, total=len(data_loader))
+        for b_idx, data in enumerate(tk0):
+            with torch.no_grad():
+                out = self.predict_one_step(data, device)
+                out = self.process_output(out)
+                yield out
+            tk0.set_postfix(stage="test")
+        tk0.close()
 
     def save(self, model_path):
         model_state_dict = self.state_dict()
