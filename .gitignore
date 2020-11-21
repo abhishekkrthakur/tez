@@ -1,6 +1,7 @@
 # local stuff
 .vscode/
 examples/.logs/
+examples/text_classification/.logs/
 *.bin
 
 # Byte-compiled / optimized / DLL files
