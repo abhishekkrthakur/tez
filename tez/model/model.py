@@ -108,7 +108,7 @@ class Model(nn.Module):
         return
 
     def forward(self, *args, **kwargs):
-        return super().__init__(*args, **kwargs)
+        return super().forward(*args, **kwargs)
 
     def train_one_step(self, data, device):
         self.optimizer.zero_grad()
