@@ -31,6 +31,8 @@ class MyModel(tez.Model):
         super().__init__()
         .
         .
+        # tell when to step the scheduler
+        self.step_scheduler_after="batch"
 
     def monitor_metrics(self, outputs, targets):
         if targets is None:
@@ -39,6 +41,12 @@ class MyModel(tez.Model):
         targets = targets.cpu().detach().numpy()
         accuracy = metrics.accuracy_score(targets, outputs)
         return {"accuracy": accuracy}
+
+    def fetch_scheduler(self):
+        # create your own scheduler
+
+    def fetch_optimizer(self):
+        # create your own optimizer
 
     def forward(self, ids, mask, token_type_ids, targets=None):
         _, o_2 = self.bert(ids, attention_mask=mask, token_type_ids=token_type_ids)
@@ -65,12 +73,6 @@ valid_dataset = SomeValidDataset()
 # init model
 model = MyModel()
 
-# optimizer
-optimizer = 
-
-# scheduler
-scheduler = 
-
 
 # init callbacks, you can also write your own callback
 tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
@@ -79,9 +81,6 @@ es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
 # train model. a familiar api!
 model.fit(
     train_dataset,
-    optimizer,
-    scheduler,
-    step_scheduler_after="batch",
     valid_dataset=valid_dataset,
     train_bs=32,
     device="cuda",
