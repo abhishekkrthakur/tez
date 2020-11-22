@@ -13,31 +13,13 @@ warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WA
 
 class Model(nn.Module):
     def __init__(self, *args, **kwargs):
-        """
-        Args:
-            x (:obj:`str`, `optional`):
-                This argument controls ...
-            a (:obj:`float`, `optional`, defaults to 1):
-                This argument is used to ...
-
-        Example::
-            # first line of code
-            # second line
-            # etc
-
-        Returns:
-            :obj:`tuple(torch.FloatTensor)` comprising various elements depending on the configuration (:class:`~transformers.BertConfig`) and inputs:
-            loss (`optional`, returned when ``masked_lm_labels`` is provided) ``torch.FloatTensor`` of shape ``(1,)``:
-                Total loss as the sum of the masked language modeling loss and the next sequence prediction (classification) loss.
-            prediction_scores (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`)
-                Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-        """
         super().__init__(*args, **kwargs)
         self.train_loader = None
         self.valid_loader = None
         self.optimizer = None
         self.scheduler = None
         self.step_scheduler_after = None
+        self.step_scheduler_metric = None
         self.current_epoch = 0
         self.current_train_step = 0
         self.current_valid_step = 0
@@ -149,7 +131,10 @@ class Model(nn.Module):
                 self.optimizer.step()
             if self.scheduler:
                 if self.step_scheduler_after == "batch":
-                    self.scheduler.step()
+                    if self.step_scheduler_metric is None:
+                        self.scheduler.step()
+                    else:
+                        self.scheduler.step(self.step_scheduler_metric)
         return loss, metrics
 
     def validate_one_step(self, data, device):
@@ -290,7 +275,10 @@ class Model(nn.Module):
                 self.train_state = enums.TrainingState.VALID_EPOCH_END
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
-                    self.scheduler.step()
+                    if self.step_scheduler_metric is None:
+                        self.scheduler.step()
+                    else:
+                        self.scheduler.step(self.step_scheduler_metric)
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
                 break
