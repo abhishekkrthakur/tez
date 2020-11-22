@@ -13,6 +13,25 @@ warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WA
 
 class Model(nn.Module):
     def __init__(self, *args, **kwargs):
+        """
+        Args:
+            x (:obj:`str`, `optional`):
+                This argument controls ...
+            a (:obj:`float`, `optional`, defaults to 1):
+                This argument is used to ...
+
+        Example::
+            # first line of code
+            # second line
+            # etc
+
+        Returns:
+            :obj:`tuple(torch.FloatTensor)` comprising various elements depending on the configuration (:class:`~transformers.BertConfig`) and inputs:
+            loss (`optional`, returned when ``masked_lm_labels`` is provided) ``torch.FloatTensor`` of shape ``(1,)``:
+                Total loss as the sum of the masked language modeling loss and the next sequence prediction (classification) loss.
+            prediction_scores (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`)
+                Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
+        """
         super().__init__(*args, **kwargs)
         self.train_loader = None
         self.valid_loader = None
