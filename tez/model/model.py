@@ -57,6 +57,8 @@ class Model(nn.Module):
         device,
         train_dataset,
         valid_dataset,
+        train_sampler,
+        valid_sampler,
         train_bs,
         valid_bs,
         n_jobs,
@@ -75,12 +77,20 @@ class Model(nn.Module):
 
         if self.train_loader is None:
             self.train_loader = torch.utils.data.DataLoader(
-                train_dataset, batch_size=train_bs, num_workers=n_jobs
+                train_dataset,
+                batch_size=train_bs,
+                num_workers=n_jobs,
+                sampler=valid_sampler,
+                shuffle=True,
             )
         if self.valid_loader is None:
             if valid_dataset is not None:
                 self.valid_loader = torch.utils.data.DataLoader(
-                    valid_dataset, batch_size=valid_bs, num_workers=n_jobs
+                    valid_dataset,
+                    batch_size=valid_bs,
+                    num_workers=n_jobs,
+                    sampler=valid_sampler,
+                    shuffle=False,
                 )
 
         if self.optimizer is None:
@@ -202,7 +212,7 @@ class Model(nn.Module):
         output = output.cpu().detach().numpy()
         return output
 
-    def predict(self, dataset, batch_size, n_jobs, device):
+    def predict(self, dataset, sampler, batch_size, n_jobs, device):
         if next(self.parameters()).device != device:
             self.to(device)
 
@@ -210,7 +220,7 @@ class Model(nn.Module):
             n_jobs = psutil.cpu_count()
 
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, num_workers=n_jobs
+            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler
         )
         self.eval()
         final_output = []
@@ -245,6 +255,8 @@ class Model(nn.Module):
         self,
         train_dataset,
         valid_dataset=None,
+        train_sampler=None,
+        valid_sampler=None,
         device="cuda",
         epochs=10,
         train_bs=16,
@@ -257,6 +269,8 @@ class Model(nn.Module):
             device=device,
             train_dataset=train_dataset,
             valid_dataset=valid_dataset,
+            train_sampler=train_sampler,
+            valid_sampler=valid_sampler,
             train_bs=train_bs,
             valid_bs=valid_bs,
             n_jobs=n_jobs,
