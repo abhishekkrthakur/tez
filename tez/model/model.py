@@ -1,3 +1,7 @@
+"""
+The tez model class
+"""
+
 import warnings
 
 import psutil
@@ -13,6 +17,9 @@ warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WA
 
 class Model(nn.Module):
     def __init__(self, *args, **kwargs):
+        """
+        Instead of inheriting from nn.Module, you import tez and inherit from tez.Model
+        """
         super().__init__(*args, **kwargs)
         self.train_loader = None
         self.valid_loader = None

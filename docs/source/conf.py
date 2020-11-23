@@ -12,7 +12,7 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('.'))
+sys.path.insert(0, os.path.abspath('../../'))
 
 
 # -- Project information -----------------------------------------------------
@@ -20,7 +20,10 @@ sys.path.insert(0, os.path.abspath('.'))
 project = 'tez'
 copyright = '2020, Abhishek Thakur'
 author = 'Abhishek Thakur'
-release = '0.0.3'
+
+# The full version, including alpha/beta/rc tags
+release = '0.0.5'
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -28,9 +31,9 @@ release = '0.0.3'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-'recommonmark',
-'sphinx.ext.autodoc',
-'sphinx.ext.napoleon',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -39,7 +42,7 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = []
 
 
 # -- Options for HTML output -------------------------------------------------
