@@ -219,7 +219,7 @@ class Model(nn.Module):
         output = output.cpu().detach().numpy()
         return output
 
-    def predict(self, dataset, sampler, batch_size, n_jobs, device):
+    def predict(self, dataset, device, sampler=None, batch_size=16, n_jobs=1):
         if next(self.parameters()).device != device:
             self.to(device)
 
@@ -242,8 +242,14 @@ class Model(nn.Module):
 
     def save(self, model_path):
         model_state_dict = self.state_dict()
-        opt_state_dict = self.optimizer.state_dict()
-        sch_state_dict = self.scheduler.state_dict()
+        if self.optimizer is not None:
+            opt_state_dict = self.optimizer.state_dict()
+        else:
+            opt_state_dict = None
+        if self.scheduler is not None:
+            sch_state_dict = self.scheduler.state_dict()
+        else:
+            sch_state_dict = None
         model_dict = {}
         model_dict["state_dict"] = model_state_dict
         model_dict["optimizer"] = opt_state_dict
