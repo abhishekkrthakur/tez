@@ -10,7 +10,7 @@ import torch.nn as nn
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WARNING)
 
@@ -87,7 +87,7 @@ class Model(nn.Module):
                 train_dataset,
                 batch_size=train_bs,
                 num_workers=n_jobs,
-                sampler=valid_sampler,
+                sampler=train_sampler,
                 shuffle=True,
             )
         if self.valid_loader is None:

@@ -58,7 +58,7 @@ class ImageDataset:
                 )
             if self.augmentations is not None:
                 augmented = self.augmentations(image=image)
-            image = augmented["image"]
+                image = augmented["image"]
         else:
             raise Exception("Backend not implemented")
         if self.channel_first:
