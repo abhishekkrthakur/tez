@@ -1,4 +1,4 @@
-# tez: train pytorch models fasterrrrr.......
+# tez: a simple pytorch trainer
 
 **NOTE:** Currently, we are not accepting any pull requests! All PRs will be closed. If you want a feature or something doesn't work, please create an issue.
 
