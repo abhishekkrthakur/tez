@@ -3,6 +3,8 @@
 examples/.logs/
 examples/text_classification/.logs/
 *.bin
+input/
+models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
