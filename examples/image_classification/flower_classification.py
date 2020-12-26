@@ -115,14 +115,12 @@ if __name__ == "__main__":
     train_dataset = ImageDataset(
         image_paths=train_image_paths,
         targets=train_targets,
-        resize=None,
         augmentations=train_aug,
     )
 
     valid_dataset = ImageDataset(
         image_paths=valid_image_paths,
         targets=valid_targets,
-        resize=None,
         augmentations=valid_aug,
     )
 
