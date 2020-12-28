@@ -59,6 +59,11 @@ class Model(nn.Module):
         if self._callback_runner is not None:
             self._callback_runner(value)
 
+    def name_to_metric(self, metric_name):
+        v1 = metric_name.split("_")[0]
+        v2 = "_".join(metric_name.split("_")[1:])
+        return self.metrics[v1][v2]
+
     def _init_model(
         self,
         device,
@@ -151,7 +156,8 @@ class Model(nn.Module):
                     if self.step_scheduler_metric is None:
                         self.scheduler.step()
                     else:
-                        self.scheduler.step(self.step_scheduler_metric)
+                        step_metric = self.name_to_metric(self.step_scheduler_metric)
+                        self.scheduler.step(step_metric)
         return loss, metrics
 
     def validate_one_step(self, data, device):
@@ -305,7 +311,8 @@ class Model(nn.Module):
                     if self.step_scheduler_metric is None:
                         self.scheduler.step()
                     else:
-                        self.scheduler.step(self.step_scheduler_metric)
+                        step_metric = self.name_to_metric(self.step_scheduler_metric)
+                        self.scheduler.step(step_metric)
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
                 break
