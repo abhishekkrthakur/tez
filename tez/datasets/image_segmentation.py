@@ -1,28 +1,26 @@
-import torch
-
+import cv2
 import numpy as np
-
-from PIL import Image
-from PIL import ImageFile
-
+import torch
+from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class RCNNDataset:
-    def __init__(
-        self, image_paths, bounding_boxes, augmentations=None, torchvision_format=True
-    ):
+    def __init__(self, image_paths, bounding_boxes, classes=None, augmentations=None, torchvision_format=True):
         self.image_paths = image_paths
         self.bounding_boxes = bounding_boxes
         self.augmentations = augmentations
         self.torchvision_format = torchvision_format
+        self.classes = classes
 
     def __len__(self):
         return len(self.image_paths)
 
     def __getitem__(self, item):
-        image = Image.open(self.image_paths[item])
+        # image = Image.open(self.image_paths[item])
+        image = cv2.imread(self.image_paths[item])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         bboxes = self.bounding_boxes[item]
         image = np.array(image)
         if self.augmentations is not None:
@@ -37,8 +35,11 @@ class RCNNDataset:
         bboxes[:, 3] = bboxes[:, 1] + bboxes[:, 3]
 
         area = (bboxes[:, 3] - bboxes[:, 1]) * (bboxes[:, 2] - bboxes[:, 0])
-        labels = torch.ones((bboxes.shape[0],), dtype=torch.int64)
         is_crowd = torch.zeros((bboxes.shape[0],), dtype=torch.int64)
+        if self.classes is None:
+            labels = torch.ones((bboxes.shape[0],), dtype=torch.int64)
+        else:
+            labels = torch.tensor(self.classes[item], dtype=torch.int64)
 
         target = {
             "boxes": torch.as_tensor(bboxes.tolist(), dtype=torch.float32),
@@ -52,47 +53,3 @@ class RCNNDataset:
 
         target["image"] = torch.tensor(image, dtype=torch.float)
         return target
-
-
-class MaskRCNNDataset:
-    def __init__(self, image_paths, mask_paths, targets, augmentations=None):
-        self.image_paths = image_paths
-        self.mask_paths = mask_paths
-        self.targets = targets
-        self.augmentations = augmentations
-
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        img = Image.open(img_path + ".png").convert("RGB")
-        width, height = img.size
-        img = img.resize((self.width, self.height), resample=Image.BILINEAR)
-        mask = rle2mask("1 {}".format(width * height), width, height)
-        mask = Image.fromarray(mask.T)
-        mask = mask.resize((self.width, self.height), resample=Image.BILINEAR)
-        mask = np.expand_dims(mask, axis=0)
-
-        pos = np.where(np.array(mask)[0, :, :])
-        xmin = np.min(pos[1])
-        xmax = np.max(pos[1])
-        ymin = np.min(pos[0])
-        ymax = np.max(pos[0])
-
-        boxes = torch.as_tensor([[xmin, ymin, xmax, ymax]], dtype=torch.float32)
-        labels = torch.zeros((1,), dtype=torch.int64)
-        masks = torch.as_tensor(mask, dtype=torch.uint8)
-
-        image_id = torch.tensor([idx])
-        area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
-        iscrowd = torch.ones((1,), dtype=torch.int64)
-
-        target = {}
-        target["boxes"] = boxes
-        target["labels"] = labels
-        target["masks"] = masks
-        target["image_id"] = image_id
-        target["area"] = area
-        target["iscrowd"] = iscrowd
-
-        return transforms.ToTensor()(img), target

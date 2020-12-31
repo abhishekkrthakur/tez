@@ -32,6 +32,7 @@ class Model(nn.Module):
         self.current_valid_step = 0
         self._model_state = None
         self._train_state = None
+        self.device = None
         self._callback_runner = None
         self.fp16 = False
         self.scaler = None
@@ -76,6 +77,8 @@ class Model(nn.Module):
         n_jobs,
         callbacks,
         fp16,
+        train_collate_fn,
+        valid_collate_fn,
     ):
 
         if callbacks is None:
@@ -84,8 +87,10 @@ class Model(nn.Module):
         if n_jobs == -1:
             n_jobs = psutil.cpu_count()
 
-        if next(self.parameters()).device != device:
-            self.to(device)
+        self.device = device
+
+        if next(self.parameters()).device != self.device:
+            self.to(self.device)
 
         if self.train_loader is None:
             self.train_loader = torch.utils.data.DataLoader(
@@ -94,6 +99,7 @@ class Model(nn.Module):
                 num_workers=n_jobs,
                 sampler=train_sampler,
                 shuffle=True,
+                collate_fn=train_collate_fn,
             )
         if self.valid_loader is None:
             if valid_dataset is not None:
@@ -103,6 +109,7 @@ class Model(nn.Module):
                     num_workers=n_jobs,
                     sampler=valid_sampler,
                     shuffle=False,
+                    collate_fn=valid_collate_fn,
                 )
 
         if self.optimizer is None:
@@ -133,15 +140,19 @@ class Model(nn.Module):
     def forward(self, *args, **kwargs):
         return super().forward(*args, **kwargs)
 
-    def train_one_step(self, data, device):
-        self.optimizer.zero_grad()
+    def model_fn(self, data):
         for key, value in data.items():
-            data[key] = value.to(device)
+            data[key] = value.to(self.device)
         if self.fp16:
             with torch.cuda.amp.autocast():
-                _, loss, metrics = self(**data)
+                output, loss, metrics = self(**data)
         else:
-            _, loss, metrics = self(**data)
+            output, loss, metrics = self(**data)
+        return output, loss, metrics
+
+    def train_one_step(self, data):
+        self.optimizer.zero_grad()
+        _, loss, metrics = self.model_fn(data)
         with torch.set_grad_enabled(True):
             if self.fp16:
                 with torch.cuda.amp.autocast():
@@ -160,30 +171,26 @@ class Model(nn.Module):
                         self.scheduler.step(step_metric)
         return loss, metrics
 
-    def validate_one_step(self, data, device):
-        for key, value in data.items():
-            data[key] = value.to(device)
-        _, loss, metrics = self(**data)
+    def validate_one_step(self, data):
+        _, loss, metrics = self.model_fn(data)
         return loss, metrics
 
-    def predict_one_step(self, data, device):
-        for key, value in data.items():
-            data[key] = value.to(device)
-        output, _, _ = self(**data)
+    def predict_one_step(self, data):
+        output, _, _ = self.model_fn(data)
         return output
 
     def update_metrics(self, losses, monitor):
         self.metrics[self._model_state.value].update(monitor)
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
-    def train_one_epoch(self, data_loader, device):
+    def train_one_epoch(self, data_loader):
         self.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
         tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.TRAIN_STEP_START
-            loss, metrics = self.train_one_step(data, device)
+            loss, metrics = self.train_one_step(data)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -198,7 +205,7 @@ class Model(nn.Module):
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
-    def validate_one_epoch(self, data_loader, device):
+    def validate_one_epoch(self, data_loader):
         self.eval()
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
@@ -206,7 +213,7 @@ class Model(nn.Module):
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
-                loss, metrics = self.validate_one_step(data, device)
+                loss, metrics = self.validate_one_step(data)
             self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -225,22 +232,22 @@ class Model(nn.Module):
         output = output.cpu().detach().numpy()
         return output
 
-    def predict(self, dataset, device, sampler=None, batch_size=16, n_jobs=1):
-        if next(self.parameters()).device != device:
-            self.to(device)
+    def predict(self, dataset, sampler=None, batch_size=16, n_jobs=1, collate_fn=None):
+        if next(self.parameters()).device != self.device:
+            self.to(self.device)
 
         if n_jobs == -1:
             n_jobs = psutil.cpu_count()
 
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler
+            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler, collate_fn=collate_fn
         )
         self.eval()
         final_output = []
         tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
             with torch.no_grad():
-                out = self.predict_one_step(data, device)
+                out = self.predict_one_step(data)
                 out = self.process_output(out)
                 yield out
             tk0.set_postfix(stage="test")
@@ -265,8 +272,9 @@ class Model(nn.Module):
         torch.save(model_dict, model_path)
 
     def load(self, model_path, device="cuda"):
-        if next(self.parameters()).device != device:
-            self.to(device)
+        self.device = device
+        if next(self.parameters()).device != self.device:
+            self.to(self.device)
         model_dict = torch.load(model_path)
         self.load_state_dict(model_dict["state_dict"])
 
@@ -283,6 +291,8 @@ class Model(nn.Module):
         n_jobs=8,
         callbacks=None,
         fp16=False,
+        train_collate_fn=None,
+        valid_collate_fn=None,
     ):
         self._init_model(
             device=device,
@@ -295,16 +305,18 @@ class Model(nn.Module):
             n_jobs=n_jobs,
             callbacks=callbacks,
             fp16=fp16,
+            train_collate_fn=train_collate_fn,
+            valid_collate_fn=valid_collate_fn,
         )
 
         for _ in range(epochs):
             self.train_state = enums.TrainingState.EPOCH_START
             self.train_state = enums.TrainingState.TRAIN_EPOCH_START
-            train_loss = self.train_one_epoch(self.train_loader, device)
+            train_loss = self.train_one_epoch(self.train_loader)
             self.train_state = enums.TrainingState.TRAIN_EPOCH_END
             if self.valid_loader:
                 self.train_state = enums.TrainingState.VALID_EPOCH_START
-                valid_loss = self.validate_one_epoch(self.valid_loader, device)
+                valid_loss = self.validate_one_epoch(self.valid_loader)
                 self.train_state = enums.TrainingState.VALID_EPOCH_END
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
