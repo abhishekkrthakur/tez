@@ -31,10 +31,8 @@ class RCNNDataset:
         image = np.transpose(image, (2, 0, 1)).astype(np.float32)
         bboxes = np.array(bboxes)
 
-        bboxes[:, 2] = bboxes[:, 0] + bboxes[:, 2]
-        bboxes[:, 3] = bboxes[:, 1] + bboxes[:, 3]
-
         area = (bboxes[:, 3] - bboxes[:, 1]) * (bboxes[:, 2] - bboxes[:, 0])
+
         is_crowd = torch.zeros((bboxes.shape[0],), dtype=torch.int64)
         if self.classes is None:
             labels = torch.ones((bboxes.shape[0],), dtype=torch.int64)
