@@ -8,7 +8,7 @@ if __name__ == "__main__":
     setup(
         name="tez",
         version="0.0.9",
-        description="tez - a simple pytorch trainer...",
+        description="tez - a simple pytorch trainer",
         long_description=long_description,
         long_description_content_type="text/markdown",
         author="Abhishek Thakur",
