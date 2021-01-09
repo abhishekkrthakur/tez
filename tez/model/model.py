@@ -3,7 +3,7 @@ The tez model class
 """
 
 import warnings
-
+import time
 import psutil
 import torch
 import torch.nn as nn
@@ -53,6 +53,8 @@ class Model(nn.Module):
         self.metrics["valid"] = {}
         self.metrics["test"] = {}
         self.disable_tqdm = False
+        self.train_bs = None
+        self.valid_bs = None
 
     @property
     def model_state(self):
@@ -102,9 +104,12 @@ class Model(nn.Module):
             n_jobs = psutil.cpu_count()
 
         self.device = device
+        self.train_bs = train_bs
+        self.valid_bs = valid_bs
+
         if self.device == "tpu":
-            wrapped_model = xmp.MpModelWrapper(self)
-            self.tpu_model = wrapped_model.to(xm.xla_device())
+            self = xmp.MpModelWrapper(self)
+            self.to(xm.xla_device())
             self.disable_tqdm = True
         else:
             self.to(self.device)
@@ -175,25 +180,34 @@ class Model(nn.Module):
             output, loss, metrics = self(**data)
         return output, loss, metrics
 
+    def step_scheduler(self):
+        if self.scheduler:
+            if self.step_scheduler_after == "batch":
+                if self.step_scheduler_metric is None:
+                    self.scheduler.step()
+                else:
+                    step_metric = self.name_to_metric(self.step_scheduler_metric)
+                    self.scheduler.step(step_metric)
+
     def train_one_step(self, data):
         self.optimizer.zero_grad()
         _, loss, metrics = self.model_fn(data)
-        with torch.set_grad_enabled(True):
-            if self.fp16:
-                with torch.cuda.amp.autocast():
-                    self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
-            if self.scheduler:
-                if self.step_scheduler_after == "batch":
-                    if self.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
+        if self.device == "tpu":
+            loss.backward()
+            xm.optimizer_step(self.optimizer)
+            self.tracker.add(self.train_bs)
+            self.step_scheduler()
+        else:
+            with torch.set_grad_enabled(True):
+                if self.fp16:
+                    with torch.cuda.amp.autocast():
+                        self.scaler.scale(loss).backward()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+                self.step_scheduler()
         return loss, metrics
 
     def validate_one_step(self, data):
@@ -209,10 +223,14 @@ class Model(nn.Module):
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def train_one_epoch(self, data_loader):
+        if self.device == "tpu":
+            self.tracker = xm.RateTracker()
+            para_loader = pl.ParallelLoader(data_loader, [xm.xla_device()])
+            data_loader = para_loader.per_device_loader(xm.xla_device())
         self.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
-        tk0 = tqdm(data_loader, total=len(data_loader))
+        tk0 = tqdm(data_loader, total=len(data_loader), disable=self.disable_tqdm)
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_one_step(data)
@@ -226,6 +244,12 @@ class Model(nn.Module):
                 monitor[m_m] = metrics_meter[m_m].avg
             self.current_train_step += 1
             tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
+            print(
+                "[xla:{}]({}) Loss={:.5f} Rate={:.2f} GlobalRate={:.2f} Stage=train Time={}".format(
+                    xm.get_ordinal(), x, loss.item(), self.tracker.rate(), self.tracker.global_rate(), time.asctime()
+                ),
+                flush=True,
+            )
         tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
@@ -234,7 +258,7 @@ class Model(nn.Module):
         self.eval()
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
-        tk0 = tqdm(data_loader, total=len(data_loader))
+        tk0 = tqdm(data_loader, total=len(data_loader), disable=self.disable_tqdm)
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
