@@ -12,6 +12,18 @@ from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
 from tqdm import tqdm
 
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    import torch_xla.debug.metrics as met
+    import torch_xla.distributed.parallel_loader as pl
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.utils.utils as xu
+
+    _TPU_AVAILABLE = True
+except ImportError:
+    _TPU_AVAILABLE = False
+
 warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WARNING)
 
 
@@ -40,6 +52,7 @@ class Model(nn.Module):
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
         self.metrics["test"] = {}
+        self.disable_tqdm = False
 
     @property
     def model_state(self):
@@ -82,7 +95,6 @@ class Model(nn.Module):
         train_collate_fn,
         valid_collate_fn,
     ):
-
         if callbacks is None:
             callbacks = list()
 
@@ -90,11 +102,18 @@ class Model(nn.Module):
             n_jobs = psutil.cpu_count()
 
         self.device = device
-
-        if next(self.parameters()).device != self.device:
+        if self.device == "tpu":
+            wrapped_model = xmp.MpModelWrapper(self)
+            self.tpu_model = wrapped_model.to(xm.xla_device())
+            self.disable_tqdm = True
+        else:
             self.to(self.device)
 
         if self.train_loader is None:
+            if self.device == "tpu":
+                train_sampler = torch.utils.data.distributed.DistributedSampler(
+                    train_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal(), shuffle=True
+                )
             self.train_loader = torch.utils.data.DataLoader(
                 train_dataset,
                 batch_size=train_bs,
@@ -105,6 +124,10 @@ class Model(nn.Module):
             )
         if self.valid_loader is None:
             if valid_dataset is not None:
+                if self.device == "tpu":
+                    valid_sampler = torch.utils.data.distributed.DistributedSampler(
+                        valid_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal(), shuffle=False
+                    )
                 self.valid_loader = torch.utils.data.DataLoader(
                     valid_dataset,
                     batch_size=valid_bs,
