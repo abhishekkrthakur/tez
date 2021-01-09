@@ -61,6 +61,8 @@ class Model(nn.Module):
             self._callback_runner(value)
 
     def name_to_metric(self, metric_name):
+        if metric_name == "current_epoch":
+            return self.current_epoch
         v1 = metric_name.split("_")[0]
         v2 = "_".join(metric_name.split("_")[1:])
         return self.metrics[v1][v2]
