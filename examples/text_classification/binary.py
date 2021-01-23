@@ -50,7 +50,9 @@ class BERTBaseUncased(tez.Model):
         self.tokenizer = transformers.BertTokenizer.from_pretrained(
             "bert-base-uncased", do_lower_case=True
         )
-        self.bert = transformers.BertModel.from_pretrained("bert-base-uncased")
+        self.bert = transformers.BertModel.from_pretrained(
+            "bert-base-uncased", return_dict=False
+        )
         self.bert_drop = nn.Dropout(0.3)
         self.out = nn.Linear(768, 1)
         self.num_train_steps = num_train_steps
@@ -105,7 +107,7 @@ class BERTBaseUncased(tez.Model):
 
 
 if __name__ == "__main__":
-    dfx = pd.read_csv("/home/abhishek/datasets/imdb.csv", nrows=2000).fillna("none")
+    dfx = pd.read_csv("/home/abhishek/datasets/imdb.csv").fillna("none")
     dfx.sentiment = dfx.sentiment.apply(lambda x: 1 if x == "positive" else 0)
 
     df_train, df_valid = model_selection.train_test_split(

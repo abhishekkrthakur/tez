@@ -7,7 +7,14 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class RCNNDataset:
-    def __init__(self, image_paths, bounding_boxes, classes=None, augmentations=None, torchvision_format=True):
+    def __init__(
+        self,
+        image_paths,
+        bounding_boxes,
+        classes=None,
+        augmentations=None,
+        torchvision_format=True,
+    ):
         self.image_paths = image_paths
         self.bounding_boxes = bounding_boxes
         self.augmentations = augmentations

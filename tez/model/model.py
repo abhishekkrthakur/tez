@@ -242,7 +242,11 @@ class Model(nn.Module):
             n_jobs = psutil.cpu_count()
 
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler, collate_fn=collate_fn
+            dataset,
+            batch_size=batch_size,
+            num_workers=n_jobs,
+            sampler=sampler,
+            collate_fn=collate_fn,
         )
         self.eval()
         final_output = []

@@ -17,9 +17,6 @@ def create_ddp_model(model, rank, world_size):
     setup(rank, world_size)
     model = model.to(rank)
     ddp_model = DDP(model, device_ids=[rank])
-    
-
-
 
 
 def run_model(model_fn, world_size):
