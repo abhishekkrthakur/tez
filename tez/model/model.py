@@ -241,21 +241,24 @@ class Model(nn.Module):
         if n_jobs == -1:
             n_jobs = psutil.cpu_count()
 
+        if batch_size == 1:
+            n_jobs = 0
         data_loader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=batch_size,
-            num_workers=n_jobs,
-            sampler=sampler,
-            collate_fn=collate_fn,
+            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler, collate_fn=collate_fn, pin_memory=True
         )
-        self.eval()
+
+        if self.training:
+            self.eval()
+
         final_output = []
         tk0 = tqdm(data_loader, total=len(data_loader))
+
         for b_idx, data in enumerate(tk0):
             with torch.no_grad():
                 out = self.predict_one_step(data)
                 out = self.process_output(out)
                 yield out
+
             tk0.set_postfix(stage="test")
         tk0.close()
 
