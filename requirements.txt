@@ -2,3 +2,4 @@ sentencepiece==0.1.91
 tokenizers==0.9.3
 torch==1.7.0
 transformers==3.5.0
+tensorboard==2.4.1
