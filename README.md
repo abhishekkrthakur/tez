@@ -75,7 +75,6 @@ model = MyModel()
 
 
 # init callbacks, you can also write your own callback
-tb_logger = tez.callbacks.TensorBoardLogger(log_dir=".logs/")
 es = tez.callbacks.EarlyStopping(monitor="valid_loss", model_path="model.bin")
 
 # train model. a familiar api!
@@ -85,7 +84,7 @@ model.fit(
     train_bs=32,
     device="cuda",
     epochs=50,
-    callbacks=[tb_logger, es],
+    callbacks=[es],
     fp16=True,
 )
 
