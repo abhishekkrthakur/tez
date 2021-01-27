@@ -284,7 +284,7 @@ class Model(nn.Module):
         self.device = device
         if next(self.parameters()).device != self.device:
             self.to(self.device)
-        model_dict = torch.load(model_path)
+        model_dict = torch.load(model_path, map_location=device)
         self.load_state_dict(model_dict["state_dict"])
 
     def fit(
