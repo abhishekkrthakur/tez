@@ -63,9 +63,9 @@ class Model(nn.Module):
     def name_to_metric(self, metric_name):
         if metric_name == "current_epoch":
             return self.current_epoch
-        v1 = metric_name.split("_")[0]
-        v2 = "_".join(metric_name.split("_")[1:])
-        return self.metrics[v1][v2]
+        v_1 = metric_name.split("_")[0]
+        v_2 = "_".join(metric_name.split("_")[1:])
+        return self.metrics[v_1][v_2]
 
     def _init_model(
         self,
@@ -303,6 +303,11 @@ class Model(nn.Module):
         train_collate_fn=None,
         valid_collate_fn=None,
     ):
+        """
+        The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
+        function you need to train your models.
+        
+        """
         self._init_model(
             device=device,
             train_dataset=train_dataset,

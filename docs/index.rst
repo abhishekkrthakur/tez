@@ -1,9 +1,9 @@
-.. tez documentation master file, created by
-   sphinx-quickstart on Mon Nov 23 09:21:36 2020.
+.. Tez documentation master file, created by
+   sphinx-quickstart on Sun Feb  7 20:08:14 2021.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to tez's documentation!
+Welcome to Tez's documentation!
 ===============================
 
 .. toctree::
