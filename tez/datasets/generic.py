@@ -1,3 +1,7 @@
+"""
+Generic dataset for generic stuff
+"""
+
 import torch
 
 
