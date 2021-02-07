@@ -1,8 +1,7 @@
-tez.datasets package
+Tez Datasets
 ====================
 
-Submodules
-----------
+Some useful, most used dataset classes
 
 tez.datasets.generic module
 ---------------------------
