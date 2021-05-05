@@ -12,8 +12,6 @@ from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
 from tqdm import tqdm
 
-warnings.filterwarnings("ignore", message=torch.optim.lr_scheduler.SAVE_STATE_WARNING)
-
 
 class Model(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -306,7 +304,7 @@ class Model(nn.Module):
         """
         The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
         function you need to train your models.
-        
+
         """
         self._init_model(
             device=device,
