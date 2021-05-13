@@ -1,0 +1,57 @@
+site_name: Tez
+repo_url: https://github.com/abhi1thakur/tez 
+repo_name: abhi1thakur/tez
+edit_uri: ''
+theme:
+  name: material
+  features:
+    - search.suggest
+    - search.highlight
+    - search.share
+    # nav bar top
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    
+  icon:
+    repo: fontawesome/brands/github-square
+  palette:
+  - scheme: default
+    primary: cyan
+    accent: deep orange
+    toggle:
+      icon: material/lightbulb-outline
+      name: Switch to light mode
+  - scheme: slate
+    primary: blue
+    accent: deep orange
+    toggle:
+      icon: material/lightbulb
+      name: Switch to dark mode
+      
+plugins:
+  - search:
+      separator: '[\s\-\.]+'
+      prebuild_index: true
+nav:
+  - Home:
+      - tez : index.md
+  - Getting started: GettingStarted.md
+
+extra:
+  social:
+  - icon: fontawesome/brands/github-alt
+    link: https://github.com/abhi1thakur
+  # - icon: fontawesome/brands/discord
+  #   link: < >
+  - icon: fontawesome/brands/twitter
+    link: https://twitter.com/abhi1thakur
+  - icon: fontawesome/brands/linkedin
+    link: https://www.linkedin.com/in/abhi1thakur
+  - icon: fontawesome/solid/globe
+    link: https://www.datamuni.com
+markdown_extensions:
+    - smarty
+    - toc:
+        permalink: True
+    - sane_lists
