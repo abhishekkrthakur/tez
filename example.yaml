@@ -1,0 +1,15 @@
+my_model:
+  files:
+    train: /home/abhishek/datasets/winequality-red.csv
+    valid: /home/abhishek/datasets/winequality-red.csv
+    output_dir: /home/abhishek/datasets/output
+  metadata:
+    problem_type: regression
+    target_columns: quality
+    #drop_columns: 
+  algorithm:
+    model: randomforest
+    use_gpu: true
+    parameters:
+      n_estimators: 200
+      max_depth: [5, 7]

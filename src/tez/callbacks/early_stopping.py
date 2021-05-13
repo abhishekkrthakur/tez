@@ -1,4 +1,5 @@
 import numpy as np
+
 from tez import enums
 from tez.callbacks import Callback
 
@@ -39,11 +40,7 @@ class EarlyStopping(Callback):
             self.save_checkpoint(epoch_score, model)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            print(
-                "EarlyStopping counter: {} out of {}".format(
-                    self.counter, self.patience
-                )
-            )
+            print("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
             if self.counter >= self.patience:
                 model.model_state = enums.ModelState.END
         else:
@@ -53,10 +50,6 @@ class EarlyStopping(Callback):
 
     def save_checkpoint(self, epoch_score, model):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            print(
-                "Validation score improved ({} --> {}). Saving model!".format(
-                    self.val_score, epoch_score
-                )
-            )
+            print("Validation score improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
             model.save(self.model_path)
         self.val_score = epoch_score

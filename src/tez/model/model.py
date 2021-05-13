@@ -7,10 +7,11 @@ import warnings
 import psutil
 import torch
 import torch.nn as nn
+from tqdm import tqdm
+
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm import tqdm
 
 
 class Model(nn.Module):

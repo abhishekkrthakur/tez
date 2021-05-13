@@ -1,19 +1,21 @@
 # For dataset, go to: https://www.kaggle.com/msheriey/104-flowers-garden-of-eden
 # Update INPUT_PATH and MODEL_PATH
 import argparse
+import glob
 import os
 
-import glob
 import albumentations
 import pandas as pd
-import tez
 import torch
 import torch.nn as nn
 from efficientnet_pytorch import EfficientNet
 from sklearn import metrics, model_selection, preprocessing
+from torch.nn import functional as F
+
+import tez
 from tez.callbacks import EarlyStopping
 from tez.datasets import ImageDataset
-from torch.nn import functional as F
+
 
 INPUT_PATH = "../../input/"
 MODEL_PATH = "../../models/"
@@ -63,12 +65,8 @@ if __name__ == "__main__":
             albumentations.HorizontalFlip(p=0.5),
             albumentations.VerticalFlip(p=0.5),
             albumentations.ShiftScaleRotate(p=0.5),
-            albumentations.HueSaturationValue(
-                hue_shift_limit=0.2, sat_shift_limit=0.2, val_shift_limit=0.2, p=0.5
-            ),
-            albumentations.RandomBrightnessContrast(
-                brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=0.5
-            ),
+            albumentations.HueSaturationValue(hue_shift_limit=0.2, sat_shift_limit=0.2, val_shift_limit=0.2, p=0.5),
+            albumentations.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=0.5),
             albumentations.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
@@ -92,16 +90,12 @@ if __name__ == "__main__":
     )
 
     train_image_paths = glob.glob(
-        os.path.join(
-            INPUT_PATH, f"jpeg-{IMAGE_SIZE}x{IMAGE_SIZE}", "train", "**", "*.jpeg"
-        ),
+        os.path.join(INPUT_PATH, f"jpeg-{IMAGE_SIZE}x{IMAGE_SIZE}", "train", "**", "*.jpeg"),
         recursive=True,
     )
 
     valid_image_paths = glob.glob(
-        os.path.join(
-            INPUT_PATH, f"jpeg-{IMAGE_SIZE}x{IMAGE_SIZE}", "val", "**", "*.jpeg"
-        ),
+        os.path.join(INPUT_PATH, f"jpeg-{IMAGE_SIZE}x{IMAGE_SIZE}", "val", "**", "*.jpeg"),
         recursive=True,
     )
 

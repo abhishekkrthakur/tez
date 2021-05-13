@@ -1,10 +1,8 @@
 import cv2
-import torch
-
 import numpy as np
+import torch
+from PIL import Image, ImageFile
 
-from PIL import Image
-from PIL import ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
