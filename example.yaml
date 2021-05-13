@@ -4,6 +4,7 @@ my_model:
     valid: /home/abhishek/datasets/winequality-red.csv
     output_dir: /home/abhishek/datasets/output
   metadata:
+    data_type: tabular
     problem_type: regression
     target_columns: quality
     #drop_columns: 
