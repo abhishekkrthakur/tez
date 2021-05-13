@@ -5,7 +5,7 @@ from logging import log
 import yaml
 from loguru import logger
 
-from ..schemas import ALLOWED_DATA_TYPES, ConfigSchema
+from ..schemas import ALLOWED_DATA_TYPES, DATA_PROBLEM_MAPPING, ConfigSchema
 
 
 VALID_SECTIONS = {
@@ -44,6 +44,10 @@ class TezParser:
         metadata = project_config["metadata"]
         algorithm = project_config["algorithm"]
 
+        if files["train"].startswith("~") or files["valid"].startswith("~") or files["output_dir"].startswith("~"):
+            logger.error("Please provide full path for `files`")
+            sys.exit(1)
+
         if "data_type" not in metadata:
             logger.error(f"Please provide `data_type`. One of: {ALLOWED_DATA_TYPES}")
             sys.exit(1)
@@ -53,17 +57,17 @@ class TezParser:
         else:
             data_type = metadata["data_type"].strip()
 
-        # TODO: add a lot of checks
-
-        if (
-            project_config["files"]["train"].startswith("~")
-            or project_config["files"]["valid"].startswith("~")
-            or project_config["files"]["output_dir"].startswith("~")
-        ):
-            logger.error("Please provide full path for `files`")
+        allowed_problem_types = DATA_PROBLEM_MAPPING[data_type]
+        if "problem_type" not in metadata:
+            logger.error(f"Please provide `data_type`. One of: {ALLOWED_DATA_TYPES}")
             sys.exit(1)
+        elif metadata["problem_type"].strip() not in allowed_problem_types:
+            logger.error(f"`problem_type` must be one of: {allowed_problem_types} for `data_type`: {data_type}")
+            sys.exit(1)
+        else:
+            problem_type = metadata["problem_type"].strip()
 
-        if project_config["files"].get("drop_columns") is None:
+        if project_config["metadata"].get("drop_columns") is None:
             drop_columns = None
         else:
             drop_columns = project_config["files"].get("drop_columns")
@@ -74,7 +78,7 @@ class TezParser:
             "train": project_config["files"]["train"],
             "valid": project_config["files"]["valid"],
             "output_dir": project_config["files"]["output_dir"],
-            "problem_type": project_config["files"]["problem_type"],
+            "problem_type": problem_type,
             "target_columns": project_config["files"]["target_columns"],
             "drop_columns": drop_columns,
         }
