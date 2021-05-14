@@ -3,15 +3,10 @@
 <h1><b>Tez: a simple pytorch trainer</b></h1>
 </p>
 
-<p align="center">
-<!-- # badges -->
-<!-- <a href="https://codecov.io/gh/tiangolo/fastapi" target="_blank">
-    <img src="https://img.shields.io/codecov/c/github/tiangolo/fastapi?color=%2334D058" alt="Coverage">
-</a> -->
-<!-- <a href="https://pypi.org/project/fastapi" target="_blank">
-    <img src="https://img.shields.io/pypi/v/fastapi?color=%2334D058&label=pypi%20package" alt="Package version"> -->
-<!-- </a> -->
-</p>
+[![PyPI](https://img.shields.io/pypi/v/tez?color=success)](https://pypi.org/project/tez/)
+[![made-with-python](https://img.shields.io/badge/Made%20with-Python-1f425f.svg)](https://www.python.org/)
+[![GitHub license](https://img.shields.io/github/license/Atharva-Phatak/torchflare?color=success)](https://github.com/Atharva-Phatak/torchflare/blob/main/LICENSE)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/tez?color=success)
 
 
 ---
