@@ -3,9 +3,11 @@ from setuptools import find_packages, setup
 
 INSTALL_REQUIRES = [
     "loguru==0.5.3",
+    "pandas==1.2.4",
     "psutil==5.8.0",
-    "pydantic-1.8.2",
+    "pydantic==1.8.2",
     "pyyaml==5.4.1",
+    "scikit-learn==0.24.2",
     "tensorboard==2.5.0",
     "torch>=1.6.0",
     "tqdm==4.60.0",
