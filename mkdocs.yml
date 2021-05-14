@@ -1,7 +1,15 @@
 site_name: Tez
+site_description: 'Tez: a simple pytorch trainer'
+site_url: https://abhi1thakur.github.io/tez/
+
+
+# Repo
 repo_url: https://github.com/abhi1thakur/tez 
 repo_name: abhi1thakur/tez
 edit_uri: ''
+
+# Copyright
+copyright: Copyright &copy; 2021
 theme:
   name: material
   features:
@@ -12,7 +20,7 @@ theme:
     - navigation.tabs
     - navigation.sections
     - navigation.top
-    
+
   icon:
     repo: fontawesome/brands/github-square
   palette:
@@ -33,11 +41,13 @@ plugins:
   - search:
       separator: '[\s\-\.]+'
       prebuild_index: true
+
+# Menu bar 
 nav:
-  - Home:
-      - tez : index.md
+  - Tez : index.md
   - Getting started: GettingStarted.md
 
+# Social Media link at footer
 extra:
   social:
   - icon: fontawesome/brands/github-alt
@@ -50,8 +60,27 @@ extra:
     link: https://www.linkedin.com/in/abhi1thakur
   - icon: fontawesome/solid/globe
     link: https://www.datamuni.com
+
+# Extensions
 markdown_extensions:
-    - smarty
-    - toc:
-        permalink: True
-    - sane_lists
+  - meta
+  - admonition # alerts
+  - pymdownx.details #  collapsible alerts
+  - pymdownx.superfences # nest code and content inside alerts
+  - attr_list # add HTML and CSS to Markdown elements
+  - pymdownx.inlinehilite # inline code highlights
+  - pymdownx.keys # show keystroke symbols
+  - pymdownx.snippets # insert content from other files
+  - pymdownx.tabbed # content tabs
+  - footnotes
+  - def_list
+  - pymdownx.arithmatex: # mathjax
+      generic: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+      clickable_checkbox: true
+  - codehilite
+  - pymdownx.highlight:
+      use_pygments: true
+  - toc:
+      toc_depth: 4
