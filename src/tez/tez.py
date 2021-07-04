@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import unique
 from typing import Dict, List, Union
 
+import joblib
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -15,6 +16,7 @@ from .metrics import metrics
 from .model import ModelDispatcher, TezModel
 from .parser import TezConfigParser, TezParameterParser
 from .schemas import AlgorithmSchema, DataProblemSchema, TabularMetaDataSchema
+from .utils import generate_random_names
 
 
 @dataclass
@@ -24,18 +26,21 @@ class Tez:
     def __post_init__(self) -> None:
         parser = TezConfigParser(self.config_file)
         self.config = parser.parse()
+        self.logging_dir = None
+        self.output_dir = None
         self._create_required_dirs()
 
     def _create_required_dirs(self, force=True) -> None:
         logger.info(f"Creating directory: {self.config.files.output_dir}")
         try:
-            os.makedirs(self.config.files.output_dir, exist_ok=force)
+            self.output_dir = self.config.files.output_dir
+            os.makedirs(self.output_dir, exist_ok=force)
         except FileExistsError:
             logger.error("The output folder already exists!")
             sys.exit(1)
 
-        logging_dir = os.path.join(self.config.files.output_dir, "logs")
-        os.makedirs(logging_dir, exist_ok=True)
+        self.logging_dir = os.path.join(self.config.files.output_dir, "logs")
+        os.makedirs(self.logging_dir, exist_ok=True)
 
     def _create_params_list(
         self, algorithm: AlgorithmSchema
@@ -51,13 +56,17 @@ class Tez:
         param_list = self._create_params_list(self.config.algorithm)
         model_dispatcher = ModelDispatcher(algo=self.config.algorithm, data_problem=data_problem)
         models = [model_dispatcher.dispatch(parameters=plist) for plist in param_list]
+        model_names = generate_random_names(len(models))
+        models = dict(zip(model_names, models))
         return models
 
-    def _train_tabular_model(self, model, train_dataset, validation_dataset) -> None:
+    def _train_tabular_model(self, model, model_name, train_dataset, validation_dataset) -> None:
         logger.info(f"Training model: {model}")
         model.train(train_dataset)
         evaluation = model.evaluate(validation_dataset)
         logger.info(f"Metrics: {evaluation.metrics}")
+        joblib.dump(evaluation, os.path.join(self.output_dir, f"eval-{model_name}.tez"))
+        joblib.dump(model, os.path.join(self.output_dir, f"model-{model_name}.tez"))
 
     def start(self):
         if isinstance(self.config.metadata, TabularMetaDataSchema):
@@ -84,7 +93,9 @@ class Tez:
                 problem_type=self.config.metadata.problem_type,
                 id_column=self.config.metadata.id_column,
                 drop_columns=self.config.metadata.drop_columns,
-                target_name=self.config.metadata.target_columns,
+                target_names=self.config.metadata.target_columns,
+                is_training=True,
+                output_path=self.output_dir,
             )
 
             validation_dataset = TabularDataset(
@@ -92,7 +103,9 @@ class Tez:
                 problem_type=self.config.metadata.problem_type,
                 id_column=self.config.metadata.id_column,
                 drop_columns=self.config.metadata.drop_columns,
-                target_name=self.config.metadata.target_columns,
+                target_names=self.config.metadata.target_columns,
+                is_training=False,
+                output_path=self.output_dir,
             )
 
         models = self._get_model_configs()
@@ -101,5 +114,5 @@ class Tez:
             logger.error("No models were generated!")
             sys.exit(1)
 
-        for model in models:
-            self._train_tabular_model(model, train_dataset, validation_dataset)
+        for model_name, model in models.items():
+            self._train_tabular_model(model, model_name, train_dataset, validation_dataset)

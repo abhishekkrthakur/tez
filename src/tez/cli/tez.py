@@ -1,6 +1,7 @@
 import argparse
 
 from .. import __version__
+from .deploy import DeployCommand
 from .train import TrainCommand
 
 
@@ -10,6 +11,7 @@ def main():
     commands_parser = parser.add_subparsers(help="commands")
 
     TrainCommand.register_subcommand(commands_parser)
+    DeployCommand.register_subcommand(commands_parser)
 
     args = parser.parse_args()
 
