@@ -3,6 +3,7 @@ from setuptools import find_packages, setup
 
 INSTALL_REQUIRES = [
     "loguru==0.5.3",
+    "numba==0.53.1",
     "pandas==1.2.4",
     "psutil==5.8.0",
     "pydantic==1.8.2",

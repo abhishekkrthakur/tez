@@ -9,6 +9,7 @@ class DataProblemSchema(BaseModel):
 
 
 class TabularMetaDataSchema(DataProblemSchema):
+    id_column: Optional[str] = None
     target_columns: Union[str, List[str]]
     drop_columns: Optional[Union[str, List[str]]] = None
 

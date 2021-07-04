@@ -7,6 +7,7 @@ my_model:
     data_type: tabular
     problem_type: regression
     target_columns: quality
+    #id_column:
     #drop_columns: 
   algorithm:
     model: randomforest
@@ -14,4 +15,4 @@ my_model:
     parameters:
       n_estimators: 200
       max_depth: [5, 7]
-      criterion: ["entropy", "gini"]
+      criterion: ["mse", "mae"]

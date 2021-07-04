@@ -8,7 +8,7 @@ from ..base import TezModel
 @dataclass
 class TabularRegression(TezModel):
     requires_scaling: bool = True
-    verbose: bool = True
+    verbose: bool = False
     random_state: bool = 42
     n_jobs: bool = -1
     gpu: bool = False
