@@ -1,18 +1,12 @@
 import os
 import sys
 from dataclasses import dataclass
-from enum import unique
 from typing import Dict, List, Union
 
 import joblib
-import numpy as np
-import pandas as pd
 from loguru import logger
 
-from tez import datasets
-
 from .datasets import TabularDataset
-from .metrics import metrics
 from .model import ModelDispatcher, TezModel
 from .parser import TezConfigParser, TezParameterParser
 from .schemas import AlgorithmSchema, DataProblemSchema, TabularMetaDataSchema
@@ -68,6 +62,9 @@ class Tez:
         joblib.dump(evaluation, os.path.join(self.output_dir, f"eval-{model_name}.tez"))
         joblib.dump(model, os.path.join(self.output_dir, f"model-{model_name}.tez"))
 
+    def deploy(self) -> None:
+        raise NotImplementedError
+
     def start(self):
         if isinstance(self.config.metadata, TabularMetaDataSchema):
             training_data_path = self.config.files.train
@@ -107,6 +104,9 @@ class Tez:
                 is_training=False,
                 output_path=self.output_dir,
             )
+
+        else:
+            raise Exception("This type of schema is not implemented yet")
 
         models = self._get_model_configs()
 

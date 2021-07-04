@@ -73,6 +73,7 @@ class TabularDataset(TezDataset):
                     self.metric_name = "multi_column_regression"
 
             self.data_meta = {
+                "data_type": "tabular",
                 "column_types": self.column_types,
                 "label_encoder": self.label_encoder,
                 "one_hot_encoder": self.one_hot_encoder,
