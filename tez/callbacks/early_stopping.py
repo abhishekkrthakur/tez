@@ -4,7 +4,7 @@ from tez.callbacks import Callback
 
 
 class EarlyStopping(Callback):
-    def __init__(self, monitor, model_path, patience=5, mode="min", delta=0.001):
+    def __init__(self, monitor, model_path, patience=5, mode="min", delta=0.001, save_weights_only=False):
         self.monitor = monitor
         self.patience = patience
         self.counter = 0
@@ -12,6 +12,7 @@ class EarlyStopping(Callback):
         self.best_score = None
         self.early_stop = False
         self.delta = delta
+        self.save_weights_only = save_weights_only
         self.model_path = model_path
         if self.mode == "min":
             self.val_score = np.Inf
@@ -39,11 +40,7 @@ class EarlyStopping(Callback):
             self.save_checkpoint(epoch_score, model)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            print(
-                "EarlyStopping counter: {} out of {}".format(
-                    self.counter, self.patience
-                )
-            )
+            print("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
             if self.counter >= self.patience:
                 model.model_state = enums.ModelState.END
         else:
@@ -53,10 +50,6 @@ class EarlyStopping(Callback):
 
     def save_checkpoint(self, epoch_score, model):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            print(
-                "Validation score improved ({} --> {}). Saving model!".format(
-                    self.val_score, epoch_score
-                )
-            )
-            model.save(self.model_path)
+            print("Validation score improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
+            model.save(self.model_path, weights_only=self.save_weights_only)
         self.val_score = epoch_score
