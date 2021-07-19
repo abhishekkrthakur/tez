@@ -260,8 +260,11 @@ class Model(nn.Module):
             tk0.set_postfix(stage="test")
         tk0.close()
 
-    def save(self, model_path):
+    def save(self, model_path, weights_only=False):
         model_state_dict = self.state_dict()
+        if weights_only:
+            torch.save(model_state_dict, model_path)
+            return
         if self.optimizer is not None:
             opt_state_dict = self.optimizer.state_dict()
         else:
