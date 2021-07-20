@@ -34,6 +34,8 @@ class Model(nn.Module):
         self._callback_runner = None
         self.fp16 = False
         self.scaler = None
+        self.accumulation_steps = 0
+        self.batch_index = 0
         self.metrics = {}
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
@@ -79,6 +81,7 @@ class Model(nn.Module):
         fp16,
         train_collate_fn,
         valid_collate_fn,
+        accumulation_steps,
     ):
 
         if callbacks is None:
@@ -88,6 +91,7 @@ class Model(nn.Module):
             n_jobs = psutil.cpu_count()
 
         self.device = device
+        self.accumulation_steps = accumulation_steps
 
         if next(self.parameters()).device != self.device:
             self.to(self.device)
@@ -151,24 +155,29 @@ class Model(nn.Module):
         return output, loss, metrics
 
     def train_one_step(self, data):
-        self.optimizer.zero_grad()
+        if self.accumulation_steps == 1 and self.batch_index == 0:
+            self.optimizer.zero_grad()
         _, loss, metrics = self.model_fn(data)
-        with torch.set_grad_enabled(True):
-            if self.fp16:
-                with torch.cuda.amp.autocast():
-                    self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
-            if self.scheduler:
-                if self.step_scheduler_after == "batch":
-                    if self.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
+        if (self.batch_index + 1) % self.accumulation_steps == 0:
+            with torch.set_grad_enabled(True):
+                if self.fp16:
+                    with torch.cuda.amp.autocast():
+                        self.scaler.scale(loss).backward()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+                if self.scheduler:
+                    if self.step_scheduler_after == "batch":
+                        if self.step_scheduler_metric is None:
+                            self.scheduler.step()
+                        else:
+                            step_metric = self.name_to_metric(self.step_scheduler_metric)
+                            self.scheduler.step(step_metric)
+
+                if self.batch_index > 0:
+                    self.optimizer.zero_grad()
         return loss, metrics
 
     def validate_one_step(self, data):
@@ -187,8 +196,11 @@ class Model(nn.Module):
         self.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
+        if self.accumulation_steps > 1:
+            self.optimizer.zero_grad()
         tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
+            self.batch_index = b_idx
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_one_step(data)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
@@ -281,12 +293,15 @@ class Model(nn.Module):
         model_dict["fp16"] = self.fp16
         torch.save(model_dict, model_path)
 
-    def load(self, model_path, device="cuda"):
+    def load(self, model_path, weights_only=False, device="cuda"):
         self.device = device
         if next(self.parameters()).device != self.device:
             self.to(self.device)
         model_dict = torch.load(model_path, map_location=torch.device(device))
-        self.load_state_dict(model_dict["state_dict"])
+        if weights_only:
+            self.load_state_dict(model_dict)
+        else:
+            self.load_state_dict(model_dict["state_dict"])
 
     def fit(
         self,
@@ -303,6 +318,7 @@ class Model(nn.Module):
         fp16=False,
         train_collate_fn=None,
         valid_collate_fn=None,
+        accumulation_steps=1,
     ):
         """
         The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
@@ -322,6 +338,7 @@ class Model(nn.Module):
             fp16=fp16,
             train_collate_fn=train_collate_fn,
             valid_collate_fn=valid_collate_fn,
+            accumulation_steps=accumulation_steps,
         )
 
         for _ in range(epochs):
