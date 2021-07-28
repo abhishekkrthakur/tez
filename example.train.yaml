@@ -5,7 +5,7 @@ my_model:
     output_dir: /home/abhishek/datasets/output
   metadata:
     data_type: tabular
-    problem_type: regression
+    problem_type: classification
     target_columns: quality
     #id_column:
     #drop_columns: 
@@ -15,4 +15,4 @@ my_model:
     parameters:
       n_estimators: 200
       max_depth: [5, 7]
-      criterion: ["mse", "mae"]
+      criterion: ["gini", "entropy"]

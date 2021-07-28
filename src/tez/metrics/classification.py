@@ -4,21 +4,38 @@ from sklearn import metrics as skmetrics
 
 
 class ClassificationMetrics:
-    def __init__(self):
+    def __init__(self, problem_type, unique_targets):
         """
         init class for classification metrics
         """
-        self.metrics = {
-            "accuracy": self._accuracy,
-            "auc": self._auc,
-            "f1": self._f1,
-            "kappa": self._kappa,
-            "logloss": self._log_loss,
-            "multiclass_logloss": self._multiclass_log_loss,
-            "precision": self._precision,
-            "quadratic_kappa": self._quadratic_weighted_kappa,
-            "recall": self._recall,
-        }
+        self.problem_type = problem_type
+        self.unique_targets = unique_targets
+        if self.problem_type == "binary_classification":
+            self.average = "binary"
+            self.metrics = {
+                "accuracy": self._accuracy,
+                "auc": self._auc,
+                "f1": self._f1,
+                "logloss": self._log_loss,
+                "precision": self._precision,
+                "recall": self._recall,
+            }
+        elif self.problem_type == "multi_class_classification":
+            self.average = "micro"
+            self.metrics = {
+                "accuracy": self._accuracy,
+                "f1": self._f1,
+                "multiclass_logloss": self._multiclass_log_loss,
+                "precision": self._precision,
+                "quadratic_kappa": self._quadratic_weighted_kappa,
+                "recall": self._recall,
+            }
+        elif self.problem_type == "multi_label_classification":
+            self.metrics = {
+                "multiclass_logloss": self._multiclass_log_loss,
+            }
+        else:
+            raise ValueError("Invalid `problem_type`")
 
     def calculate(self, y_test, y_pred, y_proba):
         """
@@ -30,7 +47,7 @@ class ClassificationMetrics:
         """
         metrics = {}
         for metric in self.metrics:
-            metrics[metric] = self.metrics[metric](y_test, y_pred, y_proba)
+            metrics[metric] = self(metric, y_test, y_pred, y_proba)
         return metrics
 
     def __call__(self, metric, y_test, y_pred, y_proba):
@@ -64,9 +81,8 @@ class ClassificationMetrics:
         else:
             return self._fast_auc(y_true=y_true, y_pred=y_pred)
 
-    @staticmethod
-    def _f1(y_true, y_pred):
-        return skmetrics.f1_score(y_true=y_true, y_pred=y_pred)
+    def _f1(self, y_true, y_pred):
+        return skmetrics.f1_score(y_true=y_true, y_pred=y_pred, average=self.average)
 
     @staticmethod
     @numba.jit
@@ -98,33 +114,30 @@ class ClassificationMetrics:
         return skmetrics.cohen_kappa_score(y1, y2, weights)
 
     @staticmethod
-    def _multiclass_log_loss(y_true, y_pred, eps=1e-15):
+    def _multiclass_log_loss(y_true, y_proba, eps=1e-15):
         """
         Multi class version of Logarithmic Loss metric.
         Taken from: https://www.kaggle.com/c/predict-closed-questions-on-stack-overflow/discussion/2644#14250
         :param y_true : array, shape = [n_samples]
-        :param y_pred : array, shape = [n_samples, n_classes]
+        :param y_proba : array, shape = [n_samples, n_classes]
         :return loss : float
         """
-        predictions = np.clip(y_pred, eps, 1 - eps)
+        predictions = np.clip(y_proba, eps, 1 - eps)
 
         # normalize row sums to 1
         predictions /= predictions.sum(axis=1)[:, np.newaxis]
-
-        actual = np.zeros(y_pred.shape)
+        actual = np.zeros(y_proba.shape)
         rows = actual.shape[0]
         actual[np.arange(rows), y_true.astype(int)] = 1
         vsota = np.sum(actual * np.log(predictions))
         return -1.0 / rows * vsota
 
-    @staticmethod
-    def _precision(y_true, y_pred):
-        return skmetrics.precision_score(y_true=y_true, y_pred=y_pred)
+    def _precision(self, y_true, y_pred):
+        return skmetrics.precision_score(y_true=y_true, y_pred=y_pred, average=self.average)
 
     @staticmethod
     def _quadratic_weighted_kappa(y1, y2):
         return skmetrics.cohen_kappa_score(y1, y2, weights="quadratic")
 
-    @staticmethod
-    def _recall(y_true, y_pred):
-        return skmetrics.recall_score(y_true=y_true, y_pred=y_pred)
+    def _recall(self, y_true, y_pred):
+        return skmetrics.recall_score(y_true=y_true, y_pred=y_pred, average=self.average)

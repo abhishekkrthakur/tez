@@ -43,6 +43,7 @@ class TabularDataset(TezDataset):
 
             self.label_encoder = {}
             self.one_hot_encoder = {}
+            self.target_encoder = {}
 
             # encode column_types with label encoder if type is object type
             for col_name, col_type in self.column_types.items():
@@ -52,25 +53,38 @@ class TabularDataset(TezDataset):
                     self.label_encoder[col_name] = lbl_enc
                     self.data[col_name] = lbl_enc.transform(self.data[col_name])
 
-            self.targets = self.data[self.target_names]
             self.num_targets = len(self.target_names)
+            self.targets = self.data[self.target_names]
 
             if self.num_targets == 1:
-                self.targets = self.targets.values.ravel()
-
-            if self.num_targets == 1:
-                unique_targets = len(np.unique(self.targets))
-                if unique_targets == 2 and self.problem_type == "classification":
+                self.unique_targets = len(np.unique(self.targets))
+                if self.unique_targets == 2 and self.problem_type == "classification":
                     self.metric_name = "binary_classification"
-                elif unique_targets > 2 and self.problem_type == "classification":
+                elif self.unique_targets > 2 and self.problem_type == "classification":
                     self.metric_name = "multi_class_classification"
                 else:
                     self.metric_name = "single_column_regression"
             else:
+                self.unique_targets = None
                 if self.problem_type == "classification":
                     self.metric_name = "multi_label_classification"
                 else:
                     self.metric_name = "multi_column_regression"
+
+            if self.metric_name in (
+                "binary_classification",
+                "multi_class_classification",
+                "multi_label_classification",
+            ):
+                for col_name in self.target_names:
+                    lbl_enc = LabelEncoder()
+                    lbl_enc.fit(self.data[col_name])
+                    self.target_encoder[col_name] = lbl_enc
+                    self.data[col_name] = lbl_enc.transform(self.data[col_name])
+
+            self.targets = self.data[self.target_names]
+            if self.num_targets == 1:
+                self.targets = self.targets.values.ravel()
 
             self.data_meta = {
                 "data_type": "tabular",
@@ -81,6 +95,8 @@ class TabularDataset(TezDataset):
                 "target_columns": self.target_names,
                 "metric_name": self.metric_name,
                 "id_column": self.id_column,
+                "unique_targets": self.unique_targets,
+                "target_encoder": self.target_encoder,
             }
             joblib.dump(self.data_meta, data_meta_path)
 
@@ -93,11 +109,18 @@ class TabularDataset(TezDataset):
             self.target_names = self.data_meta["target_columns"]
             self.metric_name = self.data_meta["metric_name"]
             self.id_column = self.data_meta["id_column"]
+            self.unique_targets = self.data_meta["unique_targets"]
+            self.target_encoder = self.data_meta["target_encoder"]
 
             # encode column_types with label encoder
             for col_name, col_type in self.column_types.items():
                 if col_name in self.label_encoder:
                     self.data[col_name] = self.label_encoder[col_name].transform(self.data[col_name])
+
+            # encode target_names with label encoder
+            for col_name in self.target_names:
+                if col_name in self.target_encoder:
+                    self.data[col_name] = self.target_encoder[col_name].transform(self.data[col_name])
 
             if self.target_names[0] in self.data.columns:
                 self.targets = self.data[self.target_names]
