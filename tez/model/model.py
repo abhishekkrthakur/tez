@@ -81,6 +81,8 @@ class Model(nn.Module):
         fp16,
         train_collate_fn,
         valid_collate_fn,
+        train_shuffle,
+        valid_shuffle,
         accumulation_steps,
     ):
 
@@ -102,7 +104,7 @@ class Model(nn.Module):
                 batch_size=train_bs,
                 num_workers=n_jobs,
                 sampler=train_sampler,
-                shuffle=True,
+                shuffle=train_shuffle,
                 collate_fn=train_collate_fn,
             )
         if self.valid_loader is None:
@@ -112,7 +114,7 @@ class Model(nn.Module):
                     batch_size=valid_bs,
                     num_workers=n_jobs,
                     sampler=valid_sampler,
-                    shuffle=False,
+                    shuffle=valid_shuffle,
                     collate_fn=valid_collate_fn,
                 )
 
@@ -318,6 +320,8 @@ class Model(nn.Module):
         fp16=False,
         train_collate_fn=None,
         valid_collate_fn=None,
+        train_shuffle=True,
+        valid_shuffle=False,
         accumulation_steps=1,
     ):
         """
@@ -338,6 +342,8 @@ class Model(nn.Module):
             fp16=fp16,
             train_collate_fn=train_collate_fn,
             valid_collate_fn=valid_collate_fn,
+            train_shuffle=train_shuffle,
+            valid_shuffle=valid_shuffle,
             accumulation_steps=accumulation_steps,
         )
 
