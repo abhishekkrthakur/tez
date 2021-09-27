@@ -196,8 +196,8 @@ class Model(nn.Module):
                     else:
                         step_metric = self.name_to_metric(self.step_scheduler_metric)
                         self.scheduler.step(step_metric)
-                if self.batch_index > 0:
-                    self.zero_grad()
+            if self.batch_index > 0:
+                self.zero_grad()
         return loss, metrics
 
     def validate_one_step(self, data):
