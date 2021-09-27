@@ -10,7 +10,7 @@ import torch.nn as nn
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 try:
     import torch_xla
@@ -218,7 +218,10 @@ class Model(nn.Module):
         losses = AverageMeter()
         if self.accumulation_steps > 1:
             self.optimizer.zero_grad()
-        tk0 = tqdm(data_loader, total=len(data_loader))
+        if self.using_tpu:
+            tk0 = data_loader
+        else:
+            tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
             self.batch_index = b_idx
             self.train_state = enums.TrainingState.TRAIN_STEP_START
@@ -232,16 +235,24 @@ class Model(nn.Module):
                 metrics_meter[m_m].update(metrics[m_m], data_loader.batch_size)
                 monitor[m_m] = metrics_meter[m_m].avg
             self.current_train_step += 1
-            tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
-        tk0.close()
+            if not self.using_tpu:
+                tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
+            if self.using_tpu:
+                print("train step: {self.current_train_step} loss: {losses.avg}")
+        if not self.using_tpu:
+            tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
+
         return losses.avg
 
     def validate_one_epoch(self, data_loader):
         self.eval()
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
-        tk0 = tqdm(data_loader, total=len(data_loader))
+        if self.using_tpu:
+            tk0 = data_loader
+        else:
+            tk0 = tqdm(data_loader, total=len(data_loader))
         for b_idx, data in enumerate(tk0):
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
@@ -254,9 +265,11 @@ class Model(nn.Module):
             for m_m in metrics_meter:
                 metrics_meter[m_m].update(metrics[m_m], data_loader.batch_size)
                 monitor[m_m] = metrics_meter[m_m].avg
-            tk0.set_postfix(loss=losses.avg, stage="valid", **monitor)
+            if not self.using_tpu:
+                tk0.set_postfix(loss=losses.avg, stage="valid", **monitor)
             self.current_valid_step += 1
-        tk0.close()
+        if not self.using_tpu:
+            tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
         return losses.avg
 
@@ -280,7 +293,10 @@ class Model(nn.Module):
         if self.training:
             self.eval()
 
-        tk0 = tqdm(data_loader, total=len(data_loader))
+        if self.using_tpu:
+            tk0 = data_loader
+        else:
+            tk0 = tqdm(data_loader, total=len(data_loader))
 
         for _, data in enumerate(tk0):
             with torch.no_grad():
@@ -288,8 +304,11 @@ class Model(nn.Module):
                 out = self.process_output(out)
                 yield out
 
-            tk0.set_postfix(stage="test")
-        tk0.close()
+            if not self.using_tpu:
+                tk0.set_postfix(stage="test")
+
+        if not self.using_tpu:
+            tk0.close()
 
     def save(self, model_path, weights_only=False):
         model_state_dict = self.state_dict()
