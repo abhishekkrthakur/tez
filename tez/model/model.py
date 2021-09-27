@@ -10,7 +10,7 @@ import torch.nn as nn
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 try:
     import torch_xla
