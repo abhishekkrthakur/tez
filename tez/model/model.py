@@ -186,7 +186,6 @@ class Model(nn.Module):
                 self.scaler.update()
             else:
                 if self.using_tpu:
-                    xm.mark_step()
                     xm.optimizer_step(self.optimizer, barrier=True)
                 else:
                     self.optimizer.step()
