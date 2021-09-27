@@ -185,9 +185,11 @@ class Model(nn.Module):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                self.optimizer.step()
                 if self.using_tpu:
                     xm.mark_step()
+                    xm.optimizer_step(self.optimizer, barrier=True)
+                else:
+                    self.optimizer.step()
             if self.scheduler:
                 if self.step_scheduler_after == "batch":
                     if self.step_scheduler_metric is None:
