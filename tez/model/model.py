@@ -12,6 +12,15 @@ from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
 from tqdm import tqdm
 
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+
+    XLA_AVAILABLE = True
+except ImportError:
+    XLA_AVAILABLE = False
+
 
 class Model(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -40,6 +49,8 @@ class Model(nn.Module):
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
         self.metrics["test"] = {}
+        self.clip_grad_norm = None
+        self.using_tpu = False
 
     @property
     def model_state(self):
@@ -84,6 +95,7 @@ class Model(nn.Module):
         train_shuffle,
         valid_shuffle,
         accumulation_steps,
+        clip_grad_norm,
     ):
 
         if callbacks is None:
@@ -94,6 +106,7 @@ class Model(nn.Module):
 
         self.device = device
         self.accumulation_steps = accumulation_steps
+        self.clip_grad_norm = clip_grad_norm
 
         if next(self.parameters()).device != self.device:
             self.to(self.device)
@@ -165,12 +178,16 @@ class Model(nn.Module):
             self.scaler.scale(loss).backward()
         else:
             loss.backward()
+        if self.clip_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip_grad_norm)
         if (self.batch_index + 1) % self.accumulation_steps == 0:
             if self.fp16:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 self.optimizer.step()
+                if self.using_tpu:
+                    xm.mark_step()
             if self.scheduler:
                 if self.step_scheduler_after == "batch":
                     if self.step_scheduler_metric is None:
@@ -262,10 +279,9 @@ class Model(nn.Module):
         if self.training:
             self.eval()
 
-        final_output = []
         tk0 = tqdm(data_loader, total=len(data_loader))
 
-        for b_idx, data in enumerate(tk0):
+        for _, data in enumerate(tk0):
             with torch.no_grad():
                 out = self.predict_one_step(data)
                 out = self.process_output(out)
@@ -277,7 +293,10 @@ class Model(nn.Module):
     def save(self, model_path, weights_only=False):
         model_state_dict = self.state_dict()
         if weights_only:
-            torch.save(model_state_dict, model_path)
+            if self.using_tpu:
+                xm.save(model_state_dict, model_path)
+            else:
+                torch.save(model_state_dict, model_path)
             return
         if self.optimizer is not None:
             opt_state_dict = self.optimizer.state_dict()
@@ -293,9 +312,18 @@ class Model(nn.Module):
         model_dict["scheduler"] = sch_state_dict
         model_dict["epoch"] = self.current_epoch
         model_dict["fp16"] = self.fp16
-        torch.save(model_dict, model_path)
+        if self.using_tpu:
+            xm.save(model_dict, model_path)
+        else:
+            torch.save(model_dict, model_path)
 
     def load(self, model_path, weights_only=False, device="cuda"):
+        if device == "tpu":
+            if XLA_AVAILABLE is False:
+                raise RuntimeError("XLA is not available")
+            else:
+                self.using_tpu = True
+                device = xm.xla_device()
         self.device = device
         if next(self.parameters()).device != self.device:
             self.to(self.device)
@@ -323,12 +351,20 @@ class Model(nn.Module):
         train_shuffle=True,
         valid_shuffle=False,
         accumulation_steps=1,
+        clip_grad_norm=None,
     ):
         """
         The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
         function you need to train your models.
 
         """
+        if device == "tpu":
+            if XLA_AVAILABLE is False:
+                raise RuntimeError("XLA is not available. Please install pytorch_xla")
+            else:
+                self.using_tpu = True
+                fp16 = False
+                device = xm.xla_device()
         self._init_model(
             device=device,
             train_dataset=train_dataset,
@@ -345,6 +381,7 @@ class Model(nn.Module):
             train_shuffle=train_shuffle,
             valid_shuffle=valid_shuffle,
             accumulation_steps=accumulation_steps,
+            clip_grad_norm=clip_grad_norm,
         )
 
         for _ in range(epochs):
