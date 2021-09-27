@@ -238,7 +238,7 @@ class Model(nn.Module):
             if not self.using_tpu:
                 tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
             if self.using_tpu:
-                print("train step: {self.current_train_step} loss: {losses.avg}")
+                print(f"train step: {self.current_train_step} loss: {losses.avg}")
         if not self.using_tpu:
             tk0.close()
         self.update_metrics(losses=losses, monitor=monitor)
