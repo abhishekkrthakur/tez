@@ -11,6 +11,13 @@ from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
 from tqdm import tqdm
+import copy
+import os
+
+import torch.distributed as dist
+import torch.multiprocessing as mp
+
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 try:
     import torch_xla
@@ -20,6 +27,18 @@ try:
     XLA_AVAILABLE = True
 except ImportError:
     XLA_AVAILABLE = False
+
+
+def setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+
+def cleanup():
+    dist.destroy_process_group()
 
 
 class Model(nn.Module):
@@ -37,7 +56,7 @@ class Model(nn.Module):
         self.current_epoch = 0
         self.current_train_step = 0
         self.current_valid_step = 0
-        self._model_state = None
+        self.model__state = None
         self._train_state = None
         self.device = None
         self._callback_runner = None
@@ -51,14 +70,15 @@ class Model(nn.Module):
         self.metrics["test"] = {}
         self.clip_grad_norm = None
         self.using_tpu = False
+        self.model_ = None
 
     @property
     def model_state(self):
-        return self._model_state
+        return self.model__state
 
     @model_state.setter
     def model_state(self, value):
-        self._model_state = value
+        self.model__state = value
         # run something here in future if needed
 
     @property
@@ -77,6 +97,22 @@ class Model(nn.Module):
         v_1 = metric_name.split("_")[0]
         v_2 = "_".join(metric_name.split("_")[1:])
         return self.metrics[v_1][v_2]
+
+    def _create_model(self):
+        self.model_ = copy.deepcopy(self)
+        """
+        self.__dict__.pop("_modules", None)
+        self.__dict__.pop("training", None)
+        self.__dict__.pop("_parameters", None)
+        self.__dict__.pop("_buffers", None)
+        self.__dict__.pop("_non_persistent_buffers_set", None)
+        self.__dict__.pop("_backward_hooks", None)
+        self.__dict__.pop("_is_full_backward_hook", None)
+        self.__dict__.pop("_forward_hooks", None)
+        self.__dict__.pop("_forward_pre_hooks", None)
+        self.__dict__.pop("_state_dict_hooks", None)
+        self.__dict__.pop("_load_state_dict_pre_hooks", None)
+        """
 
     def _init_model(
         self,
@@ -108,8 +144,11 @@ class Model(nn.Module):
         self.accumulation_steps = accumulation_steps
         self.clip_grad_norm = clip_grad_norm
 
-        if next(self.parameters()).device != self.device:
-            self.to(self.device)
+        self._create_model()
+        print(vars(self))
+
+        if next(self.model_.parameters()).device != self.device:
+            self.model_.to(self.device)
 
         if self.train_loader is None:
             self.train_loader = torch.utils.data.DataLoader(
@@ -144,6 +183,8 @@ class Model(nn.Module):
         self._callback_runner = CallbackRunner(callbacks, self)
         self.train_state = enums.TrainingState.TRAIN_START
 
+        self.model_ = nn.DataParallel(self.model_)
+
     def monitor_metrics(self, *args, **kwargs):
         return
 
@@ -164,14 +205,16 @@ class Model(nn.Module):
             data[key] = value.to(self.device)
         if self.fp16:
             with torch.cuda.amp.autocast():
-                output, loss, metrics = self(**data)
+                output, loss, metrics = self.model_(**data)
         else:
-            output, loss, metrics = self(**data)
+            output, loss, metrics = self.model_(**data)
+        loss = loss.mean()
+        metrics = {k: v.mean() for k, v in metrics.items()}
         return output, loss, metrics
 
     def train_one_step(self, data):
         if self.accumulation_steps == 1 and self.batch_index == 0:
-            self.zero_grad()
+            self.model_.zero_grad()
         _, loss, metrics = self.model_fn(data)
         loss = loss / self.accumulation_steps
         if self.fp16:
@@ -197,7 +240,7 @@ class Model(nn.Module):
                         step_metric = self.name_to_metric(self.step_scheduler_metric)
                         self.scheduler.step(step_metric)
             if self.batch_index > 0:
-                self.zero_grad()
+                self.model_.zero_grad()
         return loss, metrics
 
     def validate_one_step(self, data):
@@ -209,11 +252,11 @@ class Model(nn.Module):
         return output
 
     def update_metrics(self, losses, monitor):
-        self.metrics[self._model_state.value].update(monitor)
-        self.metrics[self._model_state.value]["loss"] = losses.avg
+        self.metrics[self.model__state.value].update(monitor)
+        self.metrics[self.model__state.value]["loss"] = losses.avg
 
     def train_one_epoch(self, data_loader):
-        self.train()
+        self.model_.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
         if self.accumulation_steps > 1:
@@ -278,8 +321,8 @@ class Model(nn.Module):
         return output
 
     def predict(self, dataset, sampler=None, batch_size=16, n_jobs=1, collate_fn=None):
-        if next(self.parameters()).device != self.device:
-            self.to(self.device)
+        if next(self.model_.parameters()).device != self.device:
+            self.model_.to(self.device)
 
         if n_jobs == -1:
             n_jobs = psutil.cpu_count()
@@ -287,11 +330,16 @@ class Model(nn.Module):
         if batch_size == 1:
             n_jobs = 0
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler, collate_fn=collate_fn, pin_memory=True
+            dataset,
+            batch_size=batch_size,
+            num_workers=n_jobs,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            pin_memory=True,
         )
 
         if self.training:
-            self.eval()
+            self.model_.eval()
 
         if self.using_tpu:
             tk0 = data_loader
@@ -311,7 +359,7 @@ class Model(nn.Module):
             tk0.close()
 
     def save(self, model_path, weights_only=False):
-        model_state_dict = self.state_dict()
+        model_state_dict = self.model_.state_dict()
         if weights_only:
             if self.using_tpu:
                 xm.save(model_state_dict, model_path)
@@ -338,6 +386,7 @@ class Model(nn.Module):
             torch.save(model_dict, model_path)
 
     def load(self, model_path, weights_only=False, device="cuda"):
+        self._create_model()
         if device == "tpu":
             if XLA_AVAILABLE is False:
                 raise RuntimeError("XLA is not available")
@@ -345,13 +394,13 @@ class Model(nn.Module):
                 self.using_tpu = True
                 device = xm.xla_device()
         self.device = device
-        if next(self.parameters()).device != self.device:
-            self.to(self.device)
+        if next(self.model_.parameters()).device != self.device:
+            self.model_.to(self.device)
         model_dict = torch.load(model_path, map_location=torch.device(device))
         if weights_only:
-            self.load_state_dict(model_dict)
+            self.model_.load_state_dict(model_dict)
         else:
-            self.load_state_dict(model_dict["state_dict"])
+            self.model_.load_state_dict(model_dict["state_dict"])
 
     def fit(
         self,
@@ -385,6 +434,7 @@ class Model(nn.Module):
                 self.using_tpu = True
                 fp16 = False
                 device = xm.xla_device()
+
         self._init_model(
             device=device,
             train_dataset=train_dataset,
@@ -421,7 +471,7 @@ class Model(nn.Module):
                         step_metric = self.name_to_metric(self.step_scheduler_metric)
                         self.scheduler.step(step_metric)
             self.train_state = enums.TrainingState.EPOCH_END
-            if self._model_state.value == "end":
+            if self.model__state.value == "end":
                 break
             self.current_epoch += 1
         self.train_state = enums.TrainingState.TRAIN_END
