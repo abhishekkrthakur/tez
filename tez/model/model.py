@@ -227,7 +227,7 @@ class Model(nn.Module):
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_one_step(data)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
-            losses.update(loss.item(), data_loader.batch_size)
+            losses.update(loss.item() * self.accumulation_steps, data_loader.batch_size)
             if b_idx == 0:
                 metrics_meter = {k: AverageMeter() for k in metrics}
             monitor = {}
