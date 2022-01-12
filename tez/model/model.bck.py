@@ -2,17 +2,15 @@
 The tez model class
 """
 
-import os
 import warnings
-from dataclasses import dataclass
 
-import multiprocessing
+import psutil
 import torch
 import torch.nn as nn
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 try:
     import torch_xla
@@ -24,35 +22,35 @@ except ImportError:
     XLA_AVAILABLE = False
 
 
-@dataclass
-class Model:
-    model = None
-    train_loader = None
-    valid_loader = None
-    optimizer = None
-    scheduler = None
-    step_scheduler_after = None
-    step_scheduler_metric = None
-    current_epoch = 0
-    current_train_step = 0
-    current_valid_step = 0
-    _model_state = None
-    _train_state = None
-    device = None
-    _callback_runner = None
-    fp16 = False
-    scaler = None
-    accumulation_steps = 0
-    batch_index = 0
-    metrics = {}
-    metrics["train"] = {}
-    metrics["valid"] = {}
-    metrics["test"] = {}
-    clip_grad_norm = None
-    using_tpu = False
-    local_rank = -1
-    train_sampler = None
-    valid_sampler = None
+class Model(nn.Module):
+    def __init__(self, *args, **kwargs):
+        """
+        Instead of inheriting from nn.Module, you import tez and inherit from tez.Model
+        """
+        super().__init__(*args, **kwargs)
+        self.train_loader = None
+        self.valid_loader = None
+        self.optimizer = None
+        self.scheduler = None
+        self.step_scheduler_after = None
+        self.step_scheduler_metric = None
+        self.current_epoch = 0
+        self.current_train_step = 0
+        self.current_valid_step = 0
+        self._model_state = None
+        self._train_state = None
+        self.device = None
+        self._callback_runner = None
+        self.fp16 = False
+        self.scaler = None
+        self.accumulation_steps = 0
+        self.batch_index = 0
+        self.metrics = {}
+        self.metrics["train"] = {}
+        self.metrics["valid"] = {}
+        self.metrics["test"] = {}
+        self.clip_grad_norm = None
+        self.using_tpu = False
 
     @property
     def model_state(self):
@@ -80,6 +78,72 @@ class Model:
         v_2 = "_".join(metric_name.split("_")[1:])
         return self.metrics[v_1][v_2]
 
+    def _init_model(
+        self,
+        device,
+        train_dataset,
+        valid_dataset,
+        train_sampler,
+        valid_sampler,
+        train_bs,
+        valid_bs,
+        n_jobs,
+        callbacks,
+        fp16,
+        train_collate_fn,
+        valid_collate_fn,
+        train_shuffle,
+        valid_shuffle,
+        accumulation_steps,
+        clip_grad_norm,
+    ):
+
+        if callbacks is None:
+            callbacks = list()
+
+        if n_jobs == -1:
+            n_jobs = psutil.cpu_count()
+
+        self.device = device
+        self.accumulation_steps = accumulation_steps
+        self.clip_grad_norm = clip_grad_norm
+
+        if next(self.parameters()).device != self.device:
+            self.to(self.device)
+
+        if self.train_loader is None:
+            self.train_loader = torch.utils.data.DataLoader(
+                train_dataset,
+                batch_size=train_bs,
+                num_workers=n_jobs,
+                sampler=train_sampler,
+                shuffle=train_shuffle,
+                collate_fn=train_collate_fn,
+            )
+        if self.valid_loader is None:
+            if valid_dataset is not None:
+                self.valid_loader = torch.utils.data.DataLoader(
+                    valid_dataset,
+                    batch_size=valid_bs,
+                    num_workers=n_jobs,
+                    sampler=valid_sampler,
+                    shuffle=valid_shuffle,
+                    collate_fn=valid_collate_fn,
+                )
+
+        if self.optimizer is None:
+            self.optimizer = self.fetch_optimizer()
+
+        if self.scheduler is None:
+            self.scheduler = self.fetch_scheduler()
+
+        self.fp16 = fp16
+        if self.fp16:
+            self.scaler = torch.cuda.amp.GradScaler()
+
+        self._callback_runner = CallbackRunner(callbacks, self)
+        self.train_state = enums.TrainingState.TRAIN_START
+
     def monitor_metrics(self, *args, **kwargs):
         return
 
@@ -92,23 +156,22 @@ class Model:
     def fetch_scheduler(self, *args, **kwargs):
         return
 
+    def forward(self, *args, **kwargs):
+        return super().forward(*args, **kwargs)
+
     def model_fn(self, data):
         for key, value in data.items():
             data[key] = value.to(self.device)
         if self.fp16:
             with torch.cuda.amp.autocast():
-                op = self.model(**data)
+                output, loss, metrics = self(**data)
         else:
-            op = self.model(**data)
-        output, loss = op["logits"], op["loss"]
-        if self.local_rank == -1:
-            if self.device_count > 1:
-                loss = loss.mean()
-        return output, loss, {}
+            output, loss, metrics = self(**data)
+        return output, loss, metrics
 
     def train_one_step(self, data):
         if self.accumulation_steps == 1 and self.batch_index == 0:
-            self.model.zero_grad()
+            self.zero_grad()
         _, loss, metrics = self.model_fn(data)
         loss = loss / self.accumulation_steps
         if self.fp16:
@@ -116,7 +179,7 @@ class Model:
         else:
             loss.backward()
         if self.clip_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip_grad_norm)
         if (self.batch_index + 1) % self.accumulation_steps == 0:
             if self.fp16:
                 self.scaler.step(self.optimizer)
@@ -134,14 +197,11 @@ class Model:
                         step_metric = self.name_to_metric(self.step_scheduler_metric)
                         self.scheduler.step(step_metric)
             if self.batch_index > 0:
-                self.model.zero_grad()
+                self.zero_grad()
         return loss, metrics
 
     def validate_one_step(self, data):
         _, loss, metrics = self.model_fn(data)
-        if self.local_rank == -1:
-            if self.device_count > 1:
-                loss = loss.mean()
         return loss, metrics
 
     def predict_one_step(self, data):
@@ -153,13 +213,7 @@ class Model:
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def train_one_epoch(self, data_loader):
-        if self.local_rank != -1:
-            self.train_sampler.set_epoch(self.current_epoch)
-
-        self.model.train()
-        if self.local_rank != -1:
-            torch.distributed.barrier()
-
+        self.train()
         self.model_state = enums.ModelState.TRAIN
         losses = AverageMeter()
         if self.accumulation_steps > 1:
@@ -192,7 +246,7 @@ class Model:
         return losses.avg
 
     def validate_one_epoch(self, data_loader):
-        self.model.eval()
+        self.eval()
         self.model_state = enums.ModelState.VALID
         losses = AverageMeter()
         if self.using_tpu:
@@ -203,12 +257,6 @@ class Model:
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.validate_one_step(data)
-                if self.local_rank != -1:
-                    torch.distributed.barrier()
-                    output_tensors = [loss.clone() for _ in range(torch.distributed.get_world_size())]
-                    torch.distributed.all_gather(output_tensors, loss)
-                    loss = torch.mean(torch.stack(output_tensors))
-
             self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if b_idx == 0:
@@ -234,7 +282,7 @@ class Model:
             self.to(self.device)
 
         if n_jobs == -1:
-            n_jobs = multiprocessing.cpu_count()
+            n_jobs = psutil.cpu_count()
 
         if batch_size == 1:
             n_jobs = 0
@@ -242,8 +290,8 @@ class Model:
             dataset, batch_size=batch_size, num_workers=n_jobs, sampler=sampler, collate_fn=collate_fn, pin_memory=True
         )
 
-        if self.model.training:
-            self.model.eval()
+        if self.training:
+            self.eval()
 
         if self.using_tpu:
             tk0 = data_loader
@@ -263,7 +311,7 @@ class Model:
             tk0.close()
 
     def save(self, model_path, weights_only=False):
-        model_state_dict = self.model.state_dict()
+        model_state_dict = self.state_dict()
         if weights_only:
             if self.using_tpu:
                 xm.save(model_state_dict, model_path)
@@ -297,135 +345,73 @@ class Model:
                 self.using_tpu = True
                 device = xm.xla_device()
         self.device = device
-        if next(self.model.parameters()).device != self.device:
-            self.model.to(self.device)
+        if next(self.parameters()).device != self.device:
+            self.to(self.device)
         model_dict = torch.load(model_path, map_location=torch.device(device))
         if weights_only:
-            self.model.load_state_dict(model_dict)
+            self.load_state_dict(model_dict)
         else:
-            self.model.load_state_dict(model_dict["state_dict"])
-
-    def _init_tez(
-        self,
-        args,
-        train_dataset,
-        valid_dataset,
-        train_sampler,
-        valid_sampler,
-        callbacks,
-        train_collate_fn,
-        valid_collate_fn,
-    ):
-
-        self.train_sampler = train_sampler
-        self.valid_sampler = valid_sampler
-
-        if callbacks is None:
-            callbacks = list()
-
-        if args.n_jobs == -1:
-            n_jobs = multiprocessing.cpu_count()
-
-        self.accumulation_steps = args.accumulation_steps
-        self.clip_grad_norm = args.clip_grad_norm
-        self.device_count = torch.cuda.device_count()
-        if self.local_rank == -1:
-            if self.device_count > 1:
-                self.model = nn.DataParallel(self.model)
-        else:
-            torch.distributed.init_process_group(backend="nccl")
-            self.model = nn.parallel.DistributedDataParallel(
-                self.model,
-                device_ids=[self.local_rank],
-                output_device=self.local_rank,
-                find_unused_parameters=True,
-            )
-            if self.train_sampler is None:
-                self.train_sampler = torch.utils.data.distributed.DistributedSampler(
-                    train_dataset,
-                    shuffle=args.train_shuffle,
-                )
-
-        if self.train_loader is None:
-            self.train_loader = torch.utils.data.DataLoader(
-                train_dataset,
-                batch_size=args.train_batch_size,
-                num_workers=n_jobs,
-                sampler=train_sampler,
-                shuffle=args.train_shuffle if train_sampler is None else False,
-                collate_fn=train_collate_fn,
-            )
-        if self.valid_loader is None:
-            if valid_dataset is not None:
-                self.valid_loader = torch.utils.data.DataLoader(
-                    valid_dataset,
-                    batch_size=args.valid_batch_size,
-                    num_workers=n_jobs,
-                    sampler=valid_sampler,
-                    shuffle=args.train_shuffle if train_sampler is None else False,
-                    collate_fn=valid_collate_fn,
-                )
-
-        if self.optimizer is None:
-            self.optimizer = self.fetch_optimizer()
-
-        if self.scheduler is None:
-            self.scheduler = self.fetch_scheduler()
-
-        self.fp16 = args.fp16
-        if self.fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
-
-        self._callback_runner = CallbackRunner(callbacks, self)
-        self.train_state = enums.TrainingState.TRAIN_START
+            self.load_state_dict(model_dict["state_dict"])
 
     def fit(
         self,
         train_dataset,
-        args,
         valid_dataset=None,
         train_sampler=None,
         valid_sampler=None,
+        device="cuda",
+        epochs=10,
+        train_bs=16,
+        valid_bs=16,
+        n_jobs=8,
         callbacks=None,
+        fp16=False,
         train_collate_fn=None,
         valid_collate_fn=None,
+        train_shuffle=True,
+        valid_shuffle=False,
+        accumulation_steps=1,
+        clip_grad_norm=None,
     ):
-        self.local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
-        if args.device == "tpu":
+        """
+        The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
+        function you need to train your models.
+
+        """
+        if device == "tpu":
             if XLA_AVAILABLE is False:
-                raise RuntimeError("XLA is not available")
+                raise RuntimeError("XLA is not available. Please install pytorch_xla")
             else:
                 self.using_tpu = True
-                args.fp16 = False
-                self.device = xm.xla_device()
-
-        elif args.device.startswith("cuda"):
-            if self.local_rank == -1:
-                self.device = torch.device(args.device)
-            else:
-                self.device = torch.device("cuda", self.local_rank)
-        else:
-            self.device = torch.device("cpu")
-
-        self.model.to(self.device)
-        self._init_tez(
-            args,
-            train_dataset,
-            valid_dataset,
-            train_sampler,
-            valid_sampler,
-            callbacks,
-            train_collate_fn,
-            valid_collate_fn,
+                fp16 = False
+                device = xm.xla_device()
+        self._init_model(
+            device=device,
+            train_dataset=train_dataset,
+            valid_dataset=valid_dataset,
+            train_sampler=train_sampler,
+            valid_sampler=valid_sampler,
+            train_bs=train_bs,
+            valid_bs=valid_bs,
+            n_jobs=n_jobs,
+            callbacks=callbacks,
+            fp16=fp16,
+            train_collate_fn=train_collate_fn,
+            valid_collate_fn=valid_collate_fn,
+            train_shuffle=train_shuffle,
+            valid_shuffle=valid_shuffle,
+            accumulation_steps=accumulation_steps,
+            clip_grad_norm=clip_grad_norm,
         )
-        for _ in range(args.epochs):
+
+        for _ in range(epochs):
             self.train_state = enums.TrainingState.EPOCH_START
             self.train_state = enums.TrainingState.TRAIN_EPOCH_START
-            _ = self.train_one_epoch(self.train_loader)
+            train_loss = self.train_one_epoch(self.train_loader)
             self.train_state = enums.TrainingState.TRAIN_EPOCH_END
             if self.valid_loader:
                 self.train_state = enums.TrainingState.VALID_EPOCH_START
-                _ = self.validate_one_epoch(self.valid_loader)
+                valid_loss = self.validate_one_epoch(self.valid_loader)
                 self.train_state = enums.TrainingState.VALID_EPOCH_END
             if self.scheduler:
                 if self.step_scheduler_after == "epoch":
