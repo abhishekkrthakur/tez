@@ -5,14 +5,17 @@ import os
 
 import albumentations
 import pandas as pd
-import tez
 import torch
 import torch.nn as nn
 from efficientnet_pytorch import EfficientNet
 from sklearn import metrics, model_selection, preprocessing
+from torch.nn import functional as F
+
+import tez
+from tez import Tez
 from tez.callbacks import EarlyStopping
 from tez.datasets import ImageDataset
-from torch.nn import functional as F
+
 
 INPUT_PATH = "../input/"
 IMAGE_PATH = "../input/train_images/"
@@ -73,12 +76,8 @@ if __name__ == "__main__":
             albumentations.HorizontalFlip(p=0.5),
             albumentations.VerticalFlip(p=0.5),
             albumentations.ShiftScaleRotate(p=0.5),
-            albumentations.HueSaturationValue(
-                hue_shift_limit=0.2, sat_shift_limit=0.2, val_shift_limit=0.2, p=0.5
-            ),
-            albumentations.RandomBrightnessContrast(
-                brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=0.5
-            ),
+            albumentations.HueSaturationValue(hue_shift_limit=0.2, sat_shift_limit=0.2, val_shift_limit=0.2, p=0.5),
+            albumentations.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=0.5),
             albumentations.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
@@ -131,20 +130,12 @@ if __name__ == "__main__":
     )
 
     model = LeafModel(num_classes=dfx.label.nunique())
-    es = EarlyStopping(
-        monitor="valid_loss",
-        model_path=os.path.join(MODEL_PATH, MODEL_NAME + f"_fold_{current_fold}.bin"),
-        patience=3,
-        mode="min",
-    )
-    model.fit(
-        train_dataset,
-        valid_dataset=valid_dataset,
-        train_bs=TRAIN_BATCH_SIZE,
-        valid_bs=VALID_BATCH_SIZE,
-        device="cuda",
-        epochs=EPOCHS,
-        callbacks=[es],
-        fp16=True,
-    )
-    model.save(os.path.join(MODEL_PATH, MODEL_NAME + f"_fold_{current_fold}.bin"))
+    # es = EarlyStopping(
+    #     monitor="valid_loss",
+    #     model_path=os.path.join(MODEL_PATH, MODEL_NAME + f"_fold_{current_fold}.bin"),
+    #     patience=3,
+    #     mode="min",
+    # )
+    trainer = Tez(model)
+    trainer.fit(train_dataset)
+    # model.save(os.path.join(MODEL_PATH, MODEL_NAME + f"_fold_{current_fold}.bin"))

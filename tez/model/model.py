@@ -2,15 +2,15 @@
 The tez model class
 """
 
-import warnings
-
 import psutil
 import torch
 import torch.nn as nn
+from tqdm import tqdm
+
 from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.utils import AverageMeter
-from tqdm import tqdm
+
 
 try:
     import torch_xla
@@ -159,47 +159,6 @@ class Model(nn.Module):
     def forward(self, *args, **kwargs):
         return super().forward(*args, **kwargs)
 
-    def model_fn(self, data):
-        for key, value in data.items():
-            data[key] = value.to(self.device)
-        if self.fp16:
-            with torch.cuda.amp.autocast():
-                output, loss, metrics = self(**data)
-        else:
-            output, loss, metrics = self(**data)
-        return output, loss, metrics
-
-    def train_one_step(self, data):
-        if self.accumulation_steps == 1 and self.batch_index == 0:
-            self.zero_grad()
-        _, loss, metrics = self.model_fn(data)
-        loss = loss / self.accumulation_steps
-        if self.fp16:
-            self.scaler.scale(loss).backward()
-        else:
-            loss.backward()
-        if self.clip_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip_grad_norm)
-        if (self.batch_index + 1) % self.accumulation_steps == 0:
-            if self.fp16:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                if self.using_tpu:
-                    xm.optimizer_step(self.optimizer, barrier=True)
-                else:
-                    self.optimizer.step()
-            if self.scheduler:
-                if self.step_scheduler_after == "batch":
-                    if self.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
-            if self.batch_index > 0:
-                self.zero_grad()
-        return loss, metrics
-
     def validate_one_step(self, data):
         _, loss, metrics = self.model_fn(data)
         return loss, metrics
@@ -207,43 +166,6 @@ class Model(nn.Module):
     def predict_one_step(self, data):
         output, _, _ = self.model_fn(data)
         return output
-
-    def update_metrics(self, losses, monitor):
-        self.metrics[self._model_state.value].update(monitor)
-        self.metrics[self._model_state.value]["loss"] = losses.avg
-
-    def train_one_epoch(self, data_loader):
-        self.train()
-        self.model_state = enums.ModelState.TRAIN
-        losses = AverageMeter()
-        if self.accumulation_steps > 1:
-            self.optimizer.zero_grad()
-        if self.using_tpu:
-            tk0 = data_loader
-        else:
-            tk0 = tqdm(data_loader, total=len(data_loader))
-        for b_idx, data in enumerate(tk0):
-            self.batch_index = b_idx
-            self.train_state = enums.TrainingState.TRAIN_STEP_START
-            loss, metrics = self.train_one_step(data)
-            self.train_state = enums.TrainingState.TRAIN_STEP_END
-            losses.update(loss.item() * self.accumulation_steps, data_loader.batch_size)
-            if b_idx == 0:
-                metrics_meter = {k: AverageMeter() for k in metrics}
-            monitor = {}
-            for m_m in metrics_meter:
-                metrics_meter[m_m].update(metrics[m_m], data_loader.batch_size)
-                monitor[m_m] = metrics_meter[m_m].avg
-            self.current_train_step += 1
-            if not self.using_tpu:
-                tk0.set_postfix(loss=losses.avg, stage="train", **monitor)
-            if self.using_tpu:
-                print(f"train step: {self.current_train_step} loss: {losses.avg}")
-        if not self.using_tpu:
-            tk0.close()
-        self.update_metrics(losses=losses, monitor=monitor)
-
-        return losses.avg
 
     def validate_one_epoch(self, data_loader):
         self.eval()
@@ -326,7 +248,7 @@ class Model(nn.Module):
             sch_state_dict = self.scheduler.state_dict()
         else:
             sch_state_dict = None
-        model_dict = {}
+
         model_dict["state_dict"] = model_state_dict
         model_dict["optimizer"] = opt_state_dict
         model_dict["scheduler"] = sch_state_dict

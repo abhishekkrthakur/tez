@@ -1,6 +1,8 @@
 import numpy as np
+
 from tez import enums
 from tez.callbacks import Callback
+from tez.logger import logger
 
 
 class EarlyStopping(Callback):
@@ -28,8 +30,8 @@ class EarlyStopping(Callback):
         else:
             raise Exception("monitor must start with train_ or valid_")
 
-    def on_epoch_end(self, model):
-        epoch_score = model.metrics[self.model_state][self.monitor_value]
+    def on_epoch_end(self, tez_trainer):
+        epoch_score = tez_trainer.metrics[self.model_state][self.monitor_value]
         if self.mode == "min":
             score = -1.0 * epoch_score
         else:
@@ -37,19 +39,19 @@ class EarlyStopping(Callback):
 
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(epoch_score, model)
+            self.save_checkpoint(epoch_score, tez_trainer)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            print("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
+            logger.info("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
             if self.counter >= self.patience:
-                model.model_state = enums.ModelState.END
+                tez_trainer.model_state = enums.ModelState.END
         else:
             self.best_score = score
-            self.save_checkpoint(epoch_score, model)
+            self.save_checkpoint(epoch_score, tez_trainer)
             self.counter = 0
 
-    def save_checkpoint(self, epoch_score, model):
+    def save_checkpoint(self, epoch_score, tez_trainer):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            print("Validation score improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
-            model.save(self.model_path, weights_only=self.save_weights_only)
+            logger.info("\nScore improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
+            tez_trainer.save(self.model_path, weights_only=self.save_weights_only)
         self.val_score = epoch_score

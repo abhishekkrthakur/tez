@@ -1,19 +1,18 @@
 import pandas as pd
-import tez
 import torch
 import torch.nn as nn
 import transformers
 from sklearn import metrics, model_selection
 from transformers import AdamW, get_linear_schedule_with_warmup
 
+import tez
+
 
 class BERTDataset:
     def __init__(self, review, target):
         self.review = review
         self.target = target
-        self.tokenizer = transformers.BertTokenizer.from_pretrained(
-            "bert-base-uncased", do_lower_case=True
-        )
+        self.tokenizer = transformers.BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
         self.max_len = 64
 
     def __len__(self):
@@ -47,12 +46,8 @@ class BERTDataset:
 class BERTBaseUncased(tez.Model):
     def __init__(self, num_train_steps):
         super().__init__()
-        self.tokenizer = transformers.BertTokenizer.from_pretrained(
-            "bert-base-uncased", do_lower_case=True
-        )
-        self.bert = transformers.BertModel.from_pretrained(
-            "bert-base-uncased", return_dict=False
-        )
+        self.tokenizer = transformers.BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+        self.bert = transformers.BertModel.from_pretrained("bert-base-uncased", return_dict=False)
         self.bert_drop = nn.Dropout(0.3)
         self.out = nn.Linear(768, 1)
         self.num_train_steps = num_train_steps
@@ -63,15 +58,11 @@ class BERTBaseUncased(tez.Model):
         no_decay = ["bias", "LayerNorm.bias"]
         optimizer_parameters = [
             {
-                "params": [
-                    p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
-                ],
+                "params": [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
                 "weight_decay": 0.001,
             },
             {
-                "params": [
-                    p for n, p in param_optimizer if any(nd in n for nd in no_decay)
-                ],
+                "params": [p for n, p in param_optimizer if any(nd in n for nd in no_decay)],
                 "weight_decay": 0.0,
             },
         ]
@@ -117,13 +108,9 @@ if __name__ == "__main__":
     df_train = df_train.reset_index(drop=True)
     df_valid = df_valid.reset_index(drop=True)
 
-    train_dataset = BERTDataset(
-        review=df_train.review.values, target=df_train.sentiment.values
-    )
+    train_dataset = BERTDataset(review=df_train.review.values, target=df_train.sentiment.values)
 
-    valid_dataset = BERTDataset(
-        review=df_valid.review.values, target=df_valid.sentiment.values
-    )
+    valid_dataset = BERTDataset(review=df_valid.review.values, target=df_valid.sentiment.values)
 
     n_train_steps = int(len(df_train) / 32 * 10)
     model = BERTBaseUncased(num_train_steps=n_train_steps)
