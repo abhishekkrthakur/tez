@@ -16,7 +16,7 @@ from .config import TezConfig
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
-
+g
 
 class Tez:
     def __init__(self, model):
@@ -223,6 +223,16 @@ class Tez:
         model_dict["config"] = self.config
         torch.save(model_dict, model_path)
 
+    def load(self, model_path, weights_only=False):
+        # if next(self.model.parameters()).device != self.device:
+        #    self.to(self.device)
+        # model_dict = torch.load(model_path, map_location=torch.device(device))
+        model_dict = torch.load(model_path)
+        if weights_only:
+            self.load_state_dict(model_dict)
+        else:
+            self.load_state_dict(model_dict["state_dict"])
+
     def model_fn(self, data):
         for key, value in data.items():
             data[key] = value.to(self.config.device)
@@ -370,5 +380,63 @@ class Tez:
             torch.distributed.barrier()
         self.train_state = enums.TrainingState.TRAIN_END
 
-    def predict(self):
-        pass
+    def process_output(self, output):
+        output = output.cpu().detach().numpy()
+        return output
+
+    def predict(self, dataset, **kwargs):
+        if "sampler" in kwargs:
+            sampler = kwargs["sampler"]
+        else:
+            sampler = 16
+
+        if "collate_fn" in kwargs:
+            collate_fn = kwargs["collate_fn"]
+        else:
+            collate_fn = None
+
+        if "batch_size" in kwargs:
+            batch_size = kwargs["batch_size"]
+        else:
+            batch_size = 16
+
+        if "n_jobs" in kwargs:
+            n_jobs = kwargs["n_jobs"]
+        else:
+            n_jobs = -1
+
+        if "pin_memory" in kwargs:
+            pin_memory = kwargs["pin_memory"]
+        else:
+            pin_memory = True
+        # if next(self.model.parameters()).device != self.device:
+        #    self.model.to(self.device)
+
+        if n_jobs == -1:
+            n_jobs = multiprocessing.cpu_count()
+
+        if batch_size == 1:
+            n_jobs = 0
+        data_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=n_jobs,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            pin_memory=pin_memory,
+        )
+
+        if self.model.training:
+            self.model.eval()
+
+        tk0 = tqdm(data_loader, total=len(data_loader))
+
+        for _, data in enumerate(tk0):
+            with torch.no_grad():
+                out = self.predict_step(data)
+                out = self.process_output(out)
+                yield out
+
+            tk0.set_postfix(stage="test")
+
+        tk0.close()
