@@ -16,7 +16,7 @@ from .config import TezConfig
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
-g
+
 
 class Tez:
     def __init__(self, model):
