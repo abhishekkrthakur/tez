@@ -22,3 +22,6 @@ class TezConfig:
     step_scheduler_after: Optional[str] = "epoch"
     step_scheduler_metric: Optional[str] = "current_epoch"
     pin_memory: Optional[bool] = False
+    test_batch_size: Optional[int] = 32
+    test_drop_last: Optional[bool] = False
+    test_shuffle: Optional[bool] = False

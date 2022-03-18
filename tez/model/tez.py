@@ -11,7 +11,7 @@ from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.logger import logger
 from tez.utils import AverageMeter
-
+import time
 from .config import TezConfig
 
 
@@ -63,6 +63,7 @@ class Tez:
                     self.model = torch.nn.parallel.DistributedDataParallel(
                         self.model,
                         device_ids=[self.local_rank],
+                        output_device=self.local_rank,
                     )
                     self.num_gpu = 1
             else:
@@ -154,11 +155,15 @@ class Tez:
                     pin_memory=self.config.pin_memory,
                 )
 
-        self.optimizer = self.model.fetch_optimizer()
-        try:
-            self.scheduler = self.model.fetch_scheduler()
-        except AttributeError:
-            logger.warning("No scheduler found")
+        # try:
+        self.optimizer, self.scheduler = self.model.optimizer_scheduler()
+        # except AttributeError:
+        #    pass
+
+        # try:
+        # self.scheduler = self.model.fetch_scheduler()
+        # except AttributeError:
+        #    pass
 
         if self.config.fp16:
             self.scaler = torch.cuda.amp.GradScaler()
@@ -166,6 +171,14 @@ class Tez:
         self._callback_runner = CallbackRunner(self.callbacks, self)
         self._configure_model()
         self.train_state = enums.TrainingState.TRAIN_START
+
+        if self.local_rank != -1:
+            if torch.distributed.get_rank() == 0:
+                logger.info(f"\n{self.config}")
+                if self.optimizer == None:
+                    raise Exception("No optimizer found")
+                if self.scheduler == None:
+                    logger.warning("No scheduler found. Continuing without scheduler")
 
     @property
     def model_state(self):
@@ -183,7 +196,11 @@ class Tez:
     def train_state(self, value):
         self._train_state = value
         if self._callback_runner is not None:
-            self._callback_runner(value)
+            if self.local_rank != -1:
+                if torch.distributed.get_rank() == 0:
+                    self._callback_runner(value)
+            else:
+                self._callback_runner(value)
 
     def name_to_metric(self, metric_name):
         if metric_name == "current_epoch":
@@ -203,7 +220,11 @@ class Tez:
             model_state_dict = self.model.state_dict()
 
         if weights_only:
-            torch.save(model_state_dict, model_path)
+            if self.local_rank != -1 and self.num_gpu > 1:
+                if torch.distributed.get_rank() == 0:
+                    torch.save(model_state_dict, model_path)
+            else:
+                torch.save(model_state_dict, model_path)
             return
 
         if self.optimizer is not None:
@@ -221,17 +242,23 @@ class Tez:
         model_dict["optimizer"] = opt_state_dict
         model_dict["scheduler"] = sch_state_dict
         model_dict["config"] = self.config
-        torch.save(model_dict, model_path)
 
-    def load(self, model_path, weights_only=False):
-        # if next(self.model.parameters()).device != self.device:
-        #    self.to(self.device)
-        # model_dict = torch.load(model_path, map_location=torch.device(device))
-        model_dict = torch.load(model_path)
-        if weights_only:
-            self.load_state_dict(model_dict)
+        if self.local_rank != -1 and self.num_gpu > 1:
+            if torch.distributed.get_rank() == 0:
+                torch.save(model_dict, model_path)
         else:
-            self.load_state_dict(model_dict["state_dict"])
+            torch.save(model_dict, model_path)
+
+    def load(self, model_path, weights_only=False, device="cuda"):
+        self.config = TezConfig()
+        device = torch.device(device)
+        self.config.device = device
+        self.model.to(device)
+        model_dict = torch.load(model_path, map_location=torch.device(device))
+        if weights_only:
+            self.model.load_state_dict(model_dict)
+        else:
+            self.model.load_state_dict(model_dict["state_dict"])
 
     def model_fn(self, data):
         for key, value in data.items():
@@ -268,7 +295,7 @@ class Tez:
             else:
                 self.optimizer.step()
 
-            if self.scheduler:
+            if self.scheduler is not None:
                 if self.config.step_scheduler_after == "batch":
                     if self.config.step_scheduler_metric is None:
                         self.scheduler.step()
@@ -351,7 +378,6 @@ class Tez:
     def fit(self, train_dataset, valid_dataset=None, config: TezConfig = None, **kwargs):
         if config is None:
             config = TezConfig()
-        logger.info(f"\n{config}")
         self._init_trainer(train_dataset, valid_dataset, config, **kwargs)
         num_train_steps = int(
             len(self.train_dataset)
@@ -365,7 +391,7 @@ class Tez:
             if self.valid_loader:
                 _ = self.validate(self.valid_loader)
 
-            if self.scheduler:
+            if self.scheduler is not None:
                 if self.config.step_scheduler_after == "epoch":
                     if self.config.step_scheduler_metric is None:
                         self.scheduler.step()
@@ -374,21 +400,24 @@ class Tez:
                         self.scheduler.step(step_metric)
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
+                time.sleep(2)
                 break
             self.current_epoch += 1
-        if self.local_rank != -1:
-            torch.distributed.barrier()
         self.train_state = enums.TrainingState.TRAIN_END
+        # TODO: do we need this?
+        # if self.local_rank != -1:
+        #    torch.distributed.barrier()
 
     def process_output(self, output):
         output = output.cpu().detach().numpy()
         return output
 
     def predict(self, dataset, **kwargs):
+
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]
         else:
-            sampler = 16
+            sampler = None
 
         if "collate_fn" in kwargs:
             collate_fn = kwargs["collate_fn"]
@@ -409,14 +438,13 @@ class Tez:
             pin_memory = kwargs["pin_memory"]
         else:
             pin_memory = True
-        # if next(self.model.parameters()).device != self.device:
-        #    self.model.to(self.device)
 
         if n_jobs == -1:
             n_jobs = multiprocessing.cpu_count()
 
         if batch_size == 1:
             n_jobs = 0
+
         data_loader = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -431,9 +459,9 @@ class Tez:
 
         tk0 = tqdm(data_loader, total=len(data_loader))
 
-        for _, data in enumerate(tk0):
+        for data in tk0:
             with torch.no_grad():
-                out = self.predict_step(data)
+                out, _, _ = self.model_fn(data)
                 out = self.process_output(out)
                 yield out
 
