@@ -6,10 +6,9 @@ import warnings
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm
 
 from tez import enums
-from tez.callbacks import CallbackRunner
+from tez.callbacks import CallbackRunner, Progress
 from tez.logger import logger
 from tez.utils import AverageMeter
 
@@ -109,10 +108,18 @@ class Tez:
         else:
             self.valid_collate_fn = None
 
-        if "callbacks" in kwargs:
-            self.callbacks = kwargs["callbacks"]
+        num_train_steps = int(len(self.train_dataset) / self.config.training_batch_size * self.config.epochs)
+        if self.valid_loader:
+            num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size * self.config.epochs)
         else:
-            self.callbacks = []
+            num_valid_steps = None
+
+        _progress = Progress(num_train_steps=num_train_steps, num_valid_steps=num_valid_steps)
+
+        if "callbacks" in kwargs:
+            self.callbacks = [_progress] + kwargs["callbacks"]
+        else:
+            self.callbacks = [_progress]
 
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
@@ -324,7 +331,7 @@ class Tez:
                 metrics[metric] = metrics[metric].mean()
         return loss, metrics
 
-    def train(self, data_loader, _tqdm=None):
+    def train(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
@@ -340,7 +347,6 @@ class Tez:
             self.batch_index = batch_index
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_step(data)
-            self.train_state = enums.TrainingState.TRAIN_STEP_END
             losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
             if batch_index == 0:
                 metrics_meter = {k: AverageMeter() for k in metrics}
@@ -349,14 +355,13 @@ class Tez:
                 metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
                 monitor[m_m] = metrics_meter[m_m].avg
             self.current_train_step += 1
-            if _tqdm is not None:
-                _tqdm.set_postfix(loss=losses.avg, stage="train", epoch=self.current_epoch, **monitor)
-                _tqdm.update(1)
+            self.update_metrics(losses=losses, monitor=monitor)
+            self.train_state = enums.TrainingState.TRAIN_STEP_END
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.TRAIN_EPOCH_END
         return losses.avg
 
-    def validate(self, data_loader, _tqdm=None):
+    def validate(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
         self.train_state = enums.TrainingState.VALID_EPOCH_START
@@ -368,7 +373,6 @@ class Tez:
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.predict_step(data)
-            self.train_state = enums.TrainingState.VALID_STEP_END
             losses.update(loss.item(), data_loader.batch_size)
             if batch_index == 0:
                 metrics_meter = {k: AverageMeter() for k in metrics}
@@ -376,8 +380,8 @@ class Tez:
             for m_m in metrics_meter:
                 metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
                 monitor[m_m] = metrics_meter[m_m].avg
-            if _tqdm is not None:
-                _tqdm.set_postfix(loss=losses.avg, stage="valid", epoch=self.current_epoch, **monitor)
+            self.update_metrics(losses=losses, monitor=monitor)
+            self.train_state = enums.TrainingState.VALID_STEP_END
             self.current_valid_step += 1
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.VALID_EPOCH_END
@@ -387,15 +391,9 @@ class Tez:
         if config is None:
             config = TezConfig()
         self._init_trainer(train_dataset, valid_dataset, config, **kwargs)
-        num_train_steps = int(
-            len(self.train_dataset)
-            / self.config.training_batch_size
-            / self.config.gradient_accumulation_steps
-            * self.config.epochs
-        )
-        _tqdm = tqdm(total=num_train_steps)
+
         for _ in range(self.config.epochs):
-            _ = self.train(self.train_loader, _tqdm)
+            _ = self.train(self.train_loader)
             if self.valid_loader:
                 _ = self.validate(self.valid_loader)
 
@@ -465,14 +463,8 @@ class Tez:
         if self.model.training:
             self.model.eval()
 
-        tk0 = tqdm(data_loader, total=len(data_loader))
-
-        for data in tk0:
+        for data in data_loader:
             with torch.no_grad():
                 out, _, _ = self.model_fn(data)
                 out = self.process_output(out)
                 yield out
-
-            tk0.set_postfix(stage="test")
-
-        tk0.close()
