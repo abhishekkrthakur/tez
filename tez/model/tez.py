@@ -172,13 +172,18 @@ class Tez:
         self._configure_model()
         self.train_state = enums.TrainingState.TRAIN_START
 
+        if self.optimizer is None:
+            raise Exception("No optimizer found")
+
         if self.local_rank != -1:
             if torch.distributed.get_rank() == 0:
                 logger.info(f"\n{self.config}")
-                if self.optimizer is None:
-                    raise Exception("No optimizer found")
                 if self.scheduler is None:
                     logger.warning("No scheduler found. Continuing without scheduler")
+        else:
+            logger.info(f"\n{self.config}")
+            if self.scheduler is None:
+                logger.warning("No scheduler found. Continuing without scheduler")
 
     def _init_load_weights(self, config):
         self.config = config
