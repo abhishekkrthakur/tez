@@ -30,7 +30,7 @@ class EarlyStopping(Callback):
         else:
             raise Exception("monitor must start with train_ or valid_")
 
-    def on_epoch_end(self, tez_trainer):
+    def check(self, tez_trainer):
         epoch_score = tez_trainer.metrics[self.model_state][self.monitor_value]
         if self.mode == "min":
             score = -1.0 * epoch_score
@@ -49,6 +49,16 @@ class EarlyStopping(Callback):
             self.best_score = score
             self.save_checkpoint(epoch_score, tez_trainer)
             self.counter = 0
+
+    def on_valid_epoch_end(self, tez_trainer):
+        if tez_trainer.config.val_strategy == "epoch":
+            return
+        self.check(tez_trainer)
+
+    def on_epoch_end(self, tez_trainer):
+        if tez_trainer.config.val_strategy == "batch":
+            return
+        self.check(tez_trainer)
 
     def save_checkpoint(self, epoch_score, tez_trainer):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:

@@ -229,6 +229,8 @@ class Tez:
         return self.metrics[v_1][v_2]
 
     def update_metrics(self, losses, monitor):
+        if self._model_state.value == "end":
+            return
         self.metrics[self._model_state.value].update(monitor)
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
@@ -340,10 +342,16 @@ class Tez:
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
-        self.train_state = enums.TrainingState.EPOCH_START
+        self.model_state = enums.ModelState.TRAIN
+
+        if self._model_state.value == "end":
+            time.sleep(2)
+            self.train_state = enums.TrainingState.TRAIN_EPOCH_END
+            return losses.avg
+
         self.train_state = enums.TrainingState.TRAIN_EPOCH_START
         self.model.train()
-        self.model_state = enums.ModelState.TRAIN
+
         losses = AverageMeter()
         if self.config.gradient_accumulation_steps > 1:
             self.optimizer.zero_grad()
@@ -362,6 +370,9 @@ class Tez:
             self.current_train_step += 1
             self.update_metrics(losses=losses, monitor=monitor)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
+            if self.config.val_strategy == "batch":
+                if self.current_train_step % self.config.val_steps == 0:
+                    _ = self.validate(self.valid_loader)
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.TRAIN_EPOCH_END
         return losses.avg
@@ -369,9 +380,10 @@ class Tez:
     def validate(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
+
         self.train_state = enums.TrainingState.VALID_EPOCH_START
-        self.model.eval()
         self.model_state = enums.ModelState.VALID
+        self.model.eval()
         losses = AverageMeter()
 
         for batch_index, data in enumerate(data_loader):
@@ -398,8 +410,9 @@ class Tez:
         self._init_trainer(train_dataset, valid_dataset, config, **kwargs)
 
         for _ in range(self.config.epochs):
+            self.train_state = enums.TrainingState.EPOCH_START
             _ = self.train(self.train_loader)
-            if self.valid_loader:
+            if self.valid_loader and self.config.val_strategy == "epoch":
                 _ = self.validate(self.valid_loader)
 
             if self.scheduler is not None:

@@ -17,7 +17,7 @@ from tez.datasets import ImageDataset
 INPUT_PATH = "../../input/"
 MODEL_PATH = "../../models/"
 MODEL_NAME = os.path.basename(__file__)[:-3]
-TRAIN_BATCH_SIZE = 512
+TRAIN_BATCH_SIZE = 32
 VALID_BATCH_SIZE = 32
 IMAGE_SIZE = 192
 EPOCHS = 200
