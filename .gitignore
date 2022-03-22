@@ -3,6 +3,7 @@
 examples/.logs/
 examples/text_classification/.logs/
 *.bin
+*.csv
 input/
 models/
 
