@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import time
 import warnings
 
 import torch
@@ -11,7 +12,7 @@ from tez import enums
 from tez.callbacks import CallbackRunner
 from tez.logger import logger
 from tez.utils import AverageMeter
-import time
+
 from .config import TezConfig
 
 
@@ -155,15 +156,7 @@ class Tez:
                     pin_memory=self.config.pin_memory,
                 )
 
-        # try:
         self.optimizer, self.scheduler = self.model.optimizer_scheduler()
-        # except AttributeError:
-        #    pass
-
-        # try:
-        # self.scheduler = self.model.fetch_scheduler()
-        # except AttributeError:
-        #    pass
 
         if self.config.fp16:
             self.scaler = torch.cuda.amp.GradScaler()
@@ -175,10 +168,24 @@ class Tez:
         if self.local_rank != -1:
             if torch.distributed.get_rank() == 0:
                 logger.info(f"\n{self.config}")
-                if self.optimizer == None:
+                if self.optimizer is None:
                     raise Exception("No optimizer found")
-                if self.scheduler == None:
+                if self.scheduler is None:
                     logger.warning("No scheduler found. Continuing without scheduler")
+
+    def _init_load_weights(self, config):
+        self.config = config
+        if self.config.device == "cpu":
+            device = torch.device("cpu")
+        elif self.config.device == "cuda":
+            device = torch.device("cuda:0")
+        else:
+            raise Exception("Unknown device. Please use 'cpu' or 'cuda'")
+
+        if next(self.model.parameters()).device != device:
+            self.model.to(device)
+
+        return device
 
     @property
     def model_state(self):
@@ -249,12 +256,13 @@ class Tez:
         else:
             torch.save(model_dict, model_path)
 
-    def load(self, model_path, weights_only=False, device="cuda"):
-        self.config = TezConfig()
-        device = torch.device(device)
-        self.config.device = device
-        self.model.to(device)
-        model_dict = torch.load(model_path, map_location=torch.device(device))
+    def load(self, model_path, weights_only=False, config: TezConfig = None):
+        if config is None:
+            config = TezConfig()
+
+        device = self._init_load_weights(config)
+
+        model_dict = torch.load(model_path, map_location=device)
         if weights_only:
             self.model.load_state_dict(model_dict)
         else:
@@ -427,28 +435,28 @@ class Tez:
         if "batch_size" in kwargs:
             batch_size = kwargs["batch_size"]
         else:
-            batch_size = 16
+            batch_size = self.config.test_batch_size
 
-        if "n_jobs" in kwargs:
-            n_jobs = kwargs["n_jobs"]
+        if "num_jobs" in kwargs:
+            num_jobs = kwargs["num_jobs"]
         else:
-            n_jobs = -1
+            num_jobs = self.config.num_jobs
 
         if "pin_memory" in kwargs:
             pin_memory = kwargs["pin_memory"]
         else:
-            pin_memory = True
+            pin_memory = self.config.pin_memory
 
-        if n_jobs == -1:
-            n_jobs = multiprocessing.cpu_count()
+        if num_jobs == -1:
+            num_jobs = multiprocessing.cpu_count()
 
         if batch_size == 1:
-            n_jobs = 0
+            num_jobs = 0
 
         data_loader = DataLoader(
             dataset,
             batch_size=batch_size,
-            num_workers=n_jobs,
+            num_workers=num_jobs,
             sampler=sampler,
             collate_fn=collate_fn,
             pin_memory=pin_memory,

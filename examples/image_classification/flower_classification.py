@@ -7,14 +7,11 @@ import albumentations
 import timm
 import torch
 import torch.nn as nn
-from sklearn import metrics, preprocessing
-from torch.nn import functional as F
+from sklearn import metrics
 
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.datasets import ImageDataset
-import numpy as np
-import pandas as pd
 
 
 INPUT_PATH = "../../input/"
@@ -271,18 +268,3 @@ if __name__ == "__main__":
         config=config,
         callbacks=[es],
     )
-
-    # if torch.distributed.get_rank() == 0:
-    model = FlowerModel(num_classes=len(CLASSES))
-    model = Tez(model)
-    model.load(os.path.join(MODEL_PATH, MODEL_NAME + ".bin"), weights_only=True, device="cuda")
-    preds_iter = model.predict(test_dataset)
-    final_preds = []
-    for preds in preds_iter:
-        final_preds.append(preds)
-    final_preds = np.vstack(final_preds)
-    final_preds = np.argmax(final_preds, axis=1)
-    # final_preds = lbl_enc.inverse_transform(final_preds)
-    test_image_names = [x.split("/")[-1][:-5] for x in test_image_paths]
-    df = pd.DataFrame({"id": test_image_names, "label": final_preds})
-    df.to_csv("result.csv", index=False)
