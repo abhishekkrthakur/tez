@@ -1,5 +1,6 @@
-from tez.callbacks import Callback
 from tqdm.auto import tqdm
+
+from tez.callbacks import Callback
 
 
 class Progress(Callback):
