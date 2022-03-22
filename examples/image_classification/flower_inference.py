@@ -4,23 +4,19 @@ import glob
 import os
 
 import albumentations
+import numpy as np
+import pandas as pd
 import timm
-import torch
 import torch.nn as nn
-from sklearn import metrics
 
 from tez import Tez, TezConfig
-from tez.callbacks import EarlyStopping
 from tez.datasets import ImageDataset
 
 
 INPUT_PATH = "../../input/"
 MODEL_PATH = "../../models/"
-MODEL_NAME = os.path.basename(__file__)[:-3]
-TRAIN_BATCH_SIZE = 512
-VALID_BATCH_SIZE = 32
+MODEL_NAME = "flower_classification"
 IMAGE_SIZE = 192
-EPOCHS = 200
 
 CLASSES = {
     "pink primrose": 0,
@@ -137,31 +133,8 @@ class FlowerModel(nn.Module):
         n_features = self.model.fc.in_features
         self.model.fc = nn.Linear(n_features, num_classes)
 
-    def monitor_metrics(self, outputs, targets):
-        device = targets.get_device()
-        outputs = torch.argmax(outputs, dim=1).cpu().detach().numpy()
-        targets = targets.cpu().detach().numpy()
-        f1 = metrics.f1_score(targets, outputs, average="macro")
-        return {"f1": torch.tensor(f1, device=device)}
-
-    def optimizer_scheduler(self):
-        opt = torch.optim.Adam(self.parameters(), lr=1e-3)
-        sch = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt,
-            factor=0.5,
-            patience=2,
-            verbose=True,
-            mode="max",
-            threshold=1e-4,
-        )
-        return opt, sch
-
     def forward(self, image, targets=None):
         outputs = self.model(image)
-        if targets is not None:
-            loss = nn.CrossEntropyLoss()(outputs, targets)
-            metrics = self.monitor_metrics(outputs, targets)
-            return outputs, loss, metrics
         return outputs, 0, {}
 
 
@@ -247,24 +220,21 @@ if __name__ == "__main__":
     )
 
     model = FlowerModel(num_classes=len(CLASSES))
-    es = EarlyStopping(
-        monitor="valid_f1",
-        model_path=os.path.join(MODEL_PATH, MODEL_NAME + ".bin"),
-        patience=7,
-        mode="max",
-        save_weights_only=True,
-    )
     model = Tez(model)
+    model_path = os.path.join(MODEL_PATH, MODEL_NAME + ".bin")
     config = TezConfig(
-        training_batch_size=TRAIN_BATCH_SIZE,
-        validation_batch_size=VALID_BATCH_SIZE,
-        epochs=EPOCHS,
-        step_scheduler_after="epoch",
-        step_scheduler_metric="valid_f1",
+        test_batch_size=64,
+        device="cuda",
     )
-    model.fit(
-        train_dataset,
-        valid_dataset=valid_dataset,
-        config=config,
-        callbacks=[es],
-    )
+    model.load(model_path, weights_only=True, config=config)
+
+    preds_iter = model.predict(test_dataset)
+    final_preds = []
+    for preds in preds_iter:
+        final_preds.append(preds)
+    final_preds = np.vstack(final_preds)
+    final_preds = np.argmax(final_preds, axis=1)
+
+    test_image_names = [x.split("/")[-1][:-5] for x in test_image_paths]
+    df = pd.DataFrame({"id": test_image_names, "label": final_preds})
+    df.to_csv("result.csv", index=False)

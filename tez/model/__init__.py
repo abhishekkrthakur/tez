@@ -1,1 +1,2 @@
-from .model import Model
+from .config import TezConfig
+from .tez import Tez
