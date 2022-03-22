@@ -376,7 +376,7 @@ class Model(nn.Module):
         clip_grad_norm=None,
     ):
         print(
-            "NOTE: This is old Model class and is deprecated. It will no longer be maintained! Please use version >= 0.5.1. Its much better and supports multi-gpu training too!"
+            "NOTE: This is old Model class and is deprecated. It will no longer be maintained! Please use version > 0.5.1. Its much better and supports multi-gpu training too!"
         )
         """
         The model fit function. Heavily inspired by tf/keras, this function is the core of Tez and this is the only
