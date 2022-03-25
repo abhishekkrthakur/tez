@@ -2,21 +2,17 @@ import argparse
 import os
 
 import albumentations
-import cv2
 import numpy as np
 import pandas as pd
 import timm
 import torch
 import torch.nn as nn
-from joblib import Parallel, delayed
 from sklearn import metrics, model_selection
-from tqdm import tqdm
 
 import tez
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.utils import seed_everything
-from sklearn import preprocessing
 
 
 def parse_args():
@@ -106,8 +102,6 @@ if __name__ == "__main__":
     args = parse_args()
     seed_everything(42)
     os.makedirs(args.output, exist_ok=True)
-    os.makedirs(os.path.join(args.output, f"train"), exist_ok=True)
-    os.makedirs(os.path.join(args.output, f"test"), exist_ok=True)
 
     df = pd.read_csv(os.path.join(args.input, "train.csv"))
     test_df = pd.read_csv(os.path.join(args.input, "test.csv"))
