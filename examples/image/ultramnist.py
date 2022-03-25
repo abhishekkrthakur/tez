@@ -16,6 +16,7 @@ import tez
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.utils import seed_everything
+from sklearn import preprocessing
 
 
 def parse_args():
@@ -23,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--model_name", type=str, default="tf_efficientnetv2_b1", required=False)
-    parser.add_argument("--learning_rate", type=float, default=0.1, required=False)
+    parser.add_argument("--learning_rate", type=float, default=1e-2, required=False)
     parser.add_argument("--batch_size", type=int, default=32, required=False)
     parser.add_argument("--epochs", type=int, default=150, required=False)
     parser.add_argument("--output", type=str, default=".")
@@ -81,11 +82,9 @@ class UltraMNISTModel(tez.Model):
         device = targets.get_device()
         outputs = np.argmax(outputs.cpu().detach().numpy(), axis=1)
         targets = targets.cpu().detach().numpy()
-        f1 = metrics.f1_score(targets, outputs, average="micro")
         acc = metrics.accuracy_score(targets, outputs)
-        f1 = torch.tensor(f1, device=device)
         acc = torch.tensor(acc, device=device)
-        return {"f1": f1, "acc": acc}
+        return {"accuracy": acc}
 
     def optimizer_scheduler(self):
         opt = torch.optim.SGD(
@@ -93,11 +92,13 @@ class UltraMNISTModel(tez.Model):
             lr=self.learning_rate,
             momentum=0.9,
         )
-        sch = torch.optim.lr_scheduler.MultiStepLR(
+        sch = torch.optim.lr_scheduler.ReduceLROnPlateau(
             opt,
-            milestones=[self.n_train_steps // 2, 3 * self.n_train_steps // 4],
-            gamma=0.1,
-            verbose=False,
+            factor=0.5,
+            patience=2,
+            verbose=True,
+            mode="max",
+            threshold=1e-4,
         )
         return opt, sch
 
@@ -127,15 +128,14 @@ if __name__ == "__main__":
     test_img_paths = [os.path.join(args.input, "test", f"{i}.jpeg") for i in test_df["id"].values]
 
     # resize images
-    Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=True) for path in tqdm(train_img_paths))
-    Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=False) for path in tqdm(test_img_paths))
+    # Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=True) for path in tqdm(train_img_paths))
+    # Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=False) for path in tqdm(test_img_paths))
 
     train_aug = albumentations.Compose(
         [
-            albumentations.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=45, p=0.5),
             albumentations.Normalize(
-                mean=[0.5, 0.5, 0.5],
-                std=[0.5, 0.5, 0.5],
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
                 max_pixel_value=255.0,
                 p=1.0,
             ),
@@ -146,14 +146,17 @@ if __name__ == "__main__":
     valid_aug = albumentations.Compose(
         [
             albumentations.Normalize(
-                mean=[0.5, 0.5, 0.5],
-                std=[0.5, 0.5, 0.5],
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
                 max_pixel_value=255.0,
                 p=1.0,
             ),
         ],
         p=1.0,
     )
+
+    lbl_enc = preprocessing.LabelEncoder()
+    df["digit_sum"] = lbl_enc.fit_transform(df["digit_sum"].values)
 
     train_df, valid_df = model_selection.train_test_split(
         df,
@@ -202,11 +205,13 @@ if __name__ == "__main__":
         test_batch_size=2 * args.batch_size,
         gradient_accumulation_steps=args.accumulation_steps,
         epochs=args.epochs,
-        step_scheduler_after="batch",
+        step_scheduler_after="epoch",
+        step_scheduler_metric="valid_accuracy",
+        fp16=True,
     )
 
     es = EarlyStopping(
-        monitor="valid_acc",
+        monitor="valid_accuracy",
         model_path=os.path.join(args.output, "model.bin"),
         patience=10,
         mode="max",
@@ -228,6 +233,7 @@ if __name__ == "__main__":
         final_preds.append(preds)
     final_preds = np.vstack(final_preds)
     final_preds = np.argmax(final_preds, axis=1)
+    final_preds = lbl_enc.inverse_transform(final_preds)
 
     df = pd.DataFrame({"id": test_ids, "digit_sum": final_preds})
     df.to_csv(os.path.join(args.output, "submission.csv"), index=False)
