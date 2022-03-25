@@ -128,8 +128,8 @@ if __name__ == "__main__":
     test_img_paths = [os.path.join(args.input, "test", f"{i}.jpeg") for i in test_df["id"].values]
 
     # resize images
-    # Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=True) for path in tqdm(train_img_paths))
-    # Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=False) for path in tqdm(test_img_paths))
+    Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=True) for path in tqdm(train_img_paths))
+    Parallel(n_jobs=16)(delayed(img_resize)(path, args, is_train=False) for path in tqdm(test_img_paths))
 
     train_aug = albumentations.Compose(
         [
@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     train_df, valid_df = model_selection.train_test_split(
         df,
-        test_size=0.1,
+        test_size=0.5,
         random_state=42,
         stratify=df["digit_sum"].values,
     )
@@ -230,6 +230,7 @@ if __name__ == "__main__":
     preds_iter = model.predict(test_dataset)
     final_preds = []
     for preds in preds_iter:
+        print(preds)
         final_preds.append(preds)
     final_preds = np.vstack(final_preds)
     final_preds = np.argmax(final_preds, axis=1)
