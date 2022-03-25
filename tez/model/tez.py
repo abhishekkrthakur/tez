@@ -123,6 +123,8 @@ class Tez:
 
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
+            if self.config.num_jobs > 4:
+                self.config.num_jobs -= 2
 
         if self.world_size > 1 and self.train_sampler is None:
             self.train_sampler = DistributedSampler(
@@ -465,6 +467,8 @@ class Tez:
 
         if num_jobs == -1:
             num_jobs = multiprocessing.cpu_count()
+            if num_jobs > 4:
+                num_jobs -= 2
 
         if batch_size == 1:
             num_jobs = 0

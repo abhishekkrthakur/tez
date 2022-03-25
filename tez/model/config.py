@@ -26,7 +26,7 @@ class TezConfig:
     valid_drop_last: Optional[bool] = False
     test_drop_last: Optional[bool] = False
     test_shuffle: Optional[bool] = False
-    pin_memory: Optional[bool] = False
+    pin_memory: Optional[bool] = True
 
     # scheduler parameters
     step_scheduler_after: Optional[str] = "epoch"  # "epoch" or "batch"
