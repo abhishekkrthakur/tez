@@ -12,7 +12,6 @@ from joblib import Parallel, delayed
 from sklearn import metrics, model_selection
 from tqdm import tqdm
 
-import tez
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.utils import seed_everything
@@ -70,7 +69,7 @@ class UltraMNISTDataset:
         }
 
 
-class UltraMNISTModel(tez.Model):
+class UltraMNISTModel(nn.Module):
     def __init__(self, model_name, num_classes, learning_rate, n_train_steps):
         super().__init__()
 

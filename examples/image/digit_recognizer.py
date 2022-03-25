@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 from sklearn import metrics, model_selection
 
-import tez
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.utils import seed_everything
@@ -51,7 +50,7 @@ class DigitRecognizerDataset:
         }
 
 
-class DigitRecognizerModel(tez.Model):
+class DigitRecognizerModel(nn.Module):
     def __init__(self, model_name, num_classes, learning_rate, n_train_steps):
         super().__init__()
 
