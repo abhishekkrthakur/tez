@@ -8,6 +8,7 @@ import pandas as pd
 import timm
 import torch
 import torch.nn as nn
+from datasets import load_dataset
 from joblib import Parallel, delayed
 from sklearn import metrics, model_selection
 from tqdm import tqdm
@@ -16,7 +17,6 @@ import tez
 from tez import Tez, TezConfig
 from tez.callbacks import EarlyStopping
 from tez.utils import seed_everything
-from datasets import load_dataset
 
 
 if __name__ == "__main__":
