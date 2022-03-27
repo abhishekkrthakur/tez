@@ -36,6 +36,7 @@ class Tez:
         self.world_size = 1
         self._model_state = None
         self._train_state = None
+        self.metrics_meter = None
         self.metrics = {}
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
@@ -294,10 +295,11 @@ class Tez:
             output, loss, metrics = self.model(**data)
         return output, loss, metrics
 
-    def train_step(self, data):
+    def _zero_grad(self):
         if self.config.gradient_accumulation_steps == 1 and self.batch_index == 0:
             self.model.zero_grad()
-        _, loss, metrics = self.model_fn(data)
+
+    def _backward(self, loss, metrics):
         if self.num_gpu > 1:
             loss = loss.mean()
             for metric in metrics:
@@ -309,10 +311,14 @@ class Tez:
         else:
             loss.backward()
 
+    def _clip_grad_norm(self):
         if self.config.clip_grad_norm != -1:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip_grad_norm)
 
-        if (self.batch_index + 1) % self.config.gradient_accumulation_steps == 0:
+    def _step(self):
+        is_bi_mod_acc_zero = (self.batch_index + 1) % self.config.gradient_accumulation_steps == 0
+        is_bi_end = self.batch_index + 1 == self.train_loader
+        if is_bi_mod_acc_zero or is_bi_end:
             if self.config.fp16:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
@@ -330,6 +336,12 @@ class Tez:
             if self.batch_index > 0:
                 self.model.zero_grad()
 
+    def train_step(self, data):
+        self._zero_grad()
+        _, loss, metrics = self.model_fn(data)
+        self._backward(loss, metrics)
+        self._clip_grad_norm()
+        self._step()
         return loss, metrics
 
     def predict_step(self, data):
@@ -340,71 +352,84 @@ class Tez:
                 metrics[metric] = metrics[metric].mean()
         return loss, metrics
 
-    def train(self, data_loader):
+    def _set_training_start(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
         self.model_state = enums.ModelState.TRAIN
-
-        if self._model_state.value == "end":
-            time.sleep(2)
-            self.train_state = enums.TrainingState.TRAIN_EPOCH_END
-            return losses.avg
-
         self.train_state = enums.TrainingState.TRAIN_EPOCH_START
         self.model.train()
-
-        losses = AverageMeter()
         if self.config.gradient_accumulation_steps > 1:
             self.optimizer.zero_grad()
 
+    def _update_loss_metrics(self, losses, loss, metrics, data_loader):
+        if self.model_state == enums.ModelState.TRAIN:
+            losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
+        else:
+            losses.update(loss.item(), data_loader.batch_size)
+
+        if self.batch_index == 0:
+            self.metrics_meter = {k: AverageMeter() for k in metrics}
+
+        monitor = {}
+        for m_m in self.metrics_meter:
+            self.metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
+            monitor[m_m] = self.metrics_meter[m_m].avg
+        if self.model_state == enums.ModelState.TRAIN:
+            self.current_train_step += 1
+        else:
+            self.current_valid_step += 1
+        self.update_metrics(losses=losses, monitor=monitor)
+        return losses, monitor
+
+    def _set_training_end(self, losses, monitor):
+        self.update_metrics(losses=losses, monitor=monitor)
+        self.train_state = enums.TrainingState.TRAIN_EPOCH_END
+
+    def train(self, data_loader):
+        self._set_training_start(data_loader)
+        losses = AverageMeter()
         for batch_index, data in enumerate(data_loader):
             self.batch_index = batch_index
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_step(data)
-            losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
-            if batch_index == 0:
-                metrics_meter = {k: AverageMeter() for k in metrics}
-            monitor = {}
-            for m_m in metrics_meter:
-                metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
-                monitor[m_m] = metrics_meter[m_m].avg
-            self.current_train_step += 1
-            self.update_metrics(losses=losses, monitor=monitor)
+            losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
-            if self.config.val_strategy == "batch":
-                if self.current_train_step % self.config.val_steps == 0:
-                    _ = self.validate(self.valid_loader)
-        self.update_metrics(losses=losses, monitor=monitor)
-        self.train_state = enums.TrainingState.TRAIN_EPOCH_END
-        return losses.avg
+        self._set_training_end(losses, monitor)
 
-    def validate(self, data_loader):
+    def _set_validation_start(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
         self.train_state = enums.TrainingState.VALID_EPOCH_START
         self.model_state = enums.ModelState.VALID
         self.model.eval()
+
+    def _set_validation_end(self, losses, monitor):
+        self.update_metrics(losses=losses, monitor=monitor)
+        self.train_state = enums.TrainingState.VALID_EPOCH_END
+
+    def validate(self, data_loader):
+        self._set_validation_start(data_loader)
         losses = AverageMeter()
 
         for batch_index, data in enumerate(data_loader):
+            self.batch_index = batch_index
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.predict_step(data)
-            losses.update(loss.item(), data_loader.batch_size)
-            if batch_index == 0:
-                metrics_meter = {k: AverageMeter() for k in metrics}
-            monitor = {}
-            for m_m in metrics_meter:
-                metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
-                monitor[m_m] = metrics_meter[m_m].avg
-            self.update_metrics(losses=losses, monitor=monitor)
+            losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.VALID_STEP_END
-            self.current_valid_step += 1
-        self.update_metrics(losses=losses, monitor=monitor)
-        self.train_state = enums.TrainingState.VALID_EPOCH_END
-        return losses.avg
+        self._set_validation_end(losses, monitor)
+
+    def _step_scheduler_after_epoch(self):
+        if self.scheduler is not None:
+            if self.config.step_scheduler_after == "epoch":
+                if self.config.step_scheduler_metric is None:
+                    self.scheduler.step()
+                else:
+                    step_metric = self.name_to_metric(self.config.step_scheduler_metric)
+                    self.scheduler.step(step_metric)
 
     def fit(self, train_dataset, valid_dataset=None, config: TezConfig = None, **kwargs):
         if config is None:
@@ -413,17 +438,10 @@ class Tez:
 
         for _ in range(self.config.epochs):
             self.train_state = enums.TrainingState.EPOCH_START
-            _ = self.train(self.train_loader)
+            self.train(self.train_loader)
             if self.valid_loader and self.config.val_strategy == "epoch":
-                _ = self.validate(self.valid_loader)
-
-            if self.scheduler is not None:
-                if self.config.step_scheduler_after == "epoch":
-                    if self.config.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.config.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
+                self.validate(self.valid_loader)
+            self._step_scheduler_after_epoch()
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
                 time.sleep(2)

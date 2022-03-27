@@ -15,7 +15,7 @@ class args:
     learning_rate = 5e-5
     train_batch_size = 32
     valid_batch_size = 32
-    max_len = 64
+    max_len = 128
     accumulation_steps = 1
 
 
@@ -126,7 +126,7 @@ class IMDBModel(nn.Module):
 
 
 if __name__ == "__main__":
-    dfx = pd.read_csv("../../input/imdb.csv").fillna("none")
+    dfx = pd.read_csv("~/data/imdb.csv").fillna("none")
     dfx.sentiment = dfx.sentiment.apply(lambda x: 1 if x == "positive" else 0)
 
     df_train, df_valid = model_selection.train_test_split(
