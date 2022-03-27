@@ -5,6 +5,15 @@ import numpy as np
 import torch
 
 
+def is_tpu_available():
+    try:
+        import torch_xla
+
+        return True
+    except ImportError:
+        return False
+
+
 class AverageMeter:
     """
     Computes and stores the average and current value

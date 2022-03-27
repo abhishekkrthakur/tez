@@ -333,8 +333,7 @@ class Tez:
                         step_metric = self.name_to_metric(self.config.step_scheduler_metric)
                         self.scheduler.step(step_metric)
 
-            if self.batch_index > 0:
-                self.model.zero_grad()
+            self.model.zero_grad()
 
     def train_step(self, data):
         self._zero_grad()
