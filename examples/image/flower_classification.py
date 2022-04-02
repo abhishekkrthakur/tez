@@ -14,8 +14,8 @@ from tez.callbacks import EarlyStopping
 from tez.datasets import ImageDataset
 
 
-INPUT_PATH = "../../input/"
-MODEL_PATH = "../../models/"
+INPUT_PATH = "data/"
+MODEL_PATH = "data/models/"
 MODEL_NAME = os.path.basename(__file__)[:-3]
 TRAIN_BATCH_SIZE = 32
 VALID_BATCH_SIZE = 32
@@ -261,6 +261,8 @@ if __name__ == "__main__":
         epochs=EPOCHS,
         step_scheduler_after="epoch",
         step_scheduler_metric="valid_f1",
+        val_strategy="batch",
+        val_steps=200,
     )
     model.fit(
         train_dataset,

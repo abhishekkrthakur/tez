@@ -110,8 +110,8 @@ class Tez:
             self.valid_collate_fn = None
 
         num_train_steps = int(len(self.train_dataset) / self.config.training_batch_size * self.config.epochs)
-        if self.valid_loader:
-            num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size * self.config.epochs)
+        if self.valid_dataset:
+            num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size)
         else:
             num_valid_steps = None
 
@@ -351,7 +351,7 @@ class Tez:
                 metrics[metric] = metrics[metric].mean()
         return loss, metrics
 
-    def _set_training_start(self, data_loader):
+    def _set_training_epoch_start(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
@@ -381,12 +381,17 @@ class Tez:
         self.update_metrics(losses=losses, monitor=monitor)
         return losses, monitor
 
-    def _set_training_end(self, losses, monitor):
+    def _set_training_epoch_end(self, losses, monitor):
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.TRAIN_EPOCH_END
 
+    def _set_training_state(self):
+        self.model_state = enums.ModelState.TRAIN
+        self.train_state = enums.TrainingState.TRAIN_EPOCH_START
+        self.model.train()
+
     def train(self, data_loader):
-        self._set_training_start(data_loader)
+        self._set_training_epoch_start(data_loader)
         losses = AverageMeter()
         for batch_index, data in enumerate(data_loader):
             self.batch_index = batch_index
@@ -394,9 +399,12 @@ class Tez:
             loss, metrics = self.train_step(data)
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
-        self._set_training_end(losses, monitor)
+            if self.valid_loader and self.config.val_strategy == "batch":
+                if self.current_train_step % self.config.val_steps == 0:
+                    self.validate(self.valid_loader)
+        self._set_training_epoch_end(losses, monitor)
 
-    def _set_validation_start(self, data_loader):
+    def _set_validation_epoch_start(self, data_loader):
         if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
             data_loader.sampler.set_epoch(self.current_epoch)
 
@@ -404,12 +412,12 @@ class Tez:
         self.model_state = enums.ModelState.VALID
         self.model.eval()
 
-    def _set_validation_end(self, losses, monitor):
+    def _set_validation_epoch_end(self, losses, monitor):
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.VALID_EPOCH_END
 
     def validate(self, data_loader):
-        self._set_validation_start(data_loader)
+        self._set_validation_epoch_start(data_loader)
         losses = AverageMeter()
 
         for batch_index, data in enumerate(data_loader):
@@ -419,7 +427,9 @@ class Tez:
                 loss, metrics = self.predict_step(data)
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.VALID_STEP_END
-        self._set_validation_end(losses, monitor)
+        self._set_validation_epoch_end(losses, monitor)
+        if self.config.val_strategy == "batch":
+            self._set_training_state()
 
     def _step_scheduler_after_epoch(self):
         if self.scheduler is not None:
