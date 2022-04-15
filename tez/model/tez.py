@@ -430,7 +430,7 @@ class Tez:
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.VALID_STEP_END
         self._set_validation_epoch_end(losses, monitor)
-        if self.config.val_strategy == "batch":
+        if self.config.val_strategy == "batch" and self._model_state.value != "end":
             self._set_training_state()
 
     def _step_scheduler_after_epoch(self):
