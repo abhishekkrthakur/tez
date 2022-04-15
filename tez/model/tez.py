@@ -402,6 +402,8 @@ class Tez:
             if self.valid_loader and self.config.val_strategy == "batch":
                 if self.current_train_step % self.config.val_steps == 0:
                     self.validate(self.valid_loader)
+            if self._model_state.value == "end":
+                break
         self._set_training_epoch_end(losses, monitor)
 
     def _set_validation_epoch_start(self, data_loader):
