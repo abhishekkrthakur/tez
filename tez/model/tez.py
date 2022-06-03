@@ -41,6 +41,8 @@ class Tez:
         self.metrics["train"] = {}
         self.metrics["valid"] = {}
         self.metrics["test"] = {}
+        self.num_train_steps = None
+        self.num_valid_steps = None
 
     def _configure_model(self):
         local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -109,13 +111,13 @@ class Tez:
         else:
             self.valid_collate_fn = None
 
-        num_train_steps = int(len(self.train_dataset) / self.config.training_batch_size * self.config.epochs)
+        self.num_train_steps = int(len(self.train_dataset) / self.config.training_batch_size * self.config.epochs)
         if self.valid_dataset:
-            num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size)
+            self.num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size)
         else:
-            num_valid_steps = None
+            self.num_valid_steps = None
 
-        _progress = Progress(num_train_steps=num_train_steps, num_valid_steps=num_valid_steps)
+        _progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
 
         if "callbacks" in kwargs:
             self.callbacks = [_progress] + kwargs["callbacks"]
@@ -400,7 +402,10 @@ class Tez:
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
             if self.valid_loader and self.config.val_strategy == "batch":
-                if self.current_train_step % self.config.val_steps == 0:
+                if (
+                    self.current_train_step % self.config.val_steps == 0
+                    or self.current_train_step == self.num_train_steps
+                ):
                     self.validate(self.valid_loader)
             if self._model_state.value == "end":
                 break
