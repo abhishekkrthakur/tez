@@ -392,9 +392,8 @@ class Tez:
         self.train_state = enums.TrainingState.TRAIN_EPOCH_START
         self.model.train()
 
-    def train(self, data_loader):
+    def train(self, data_loader, losses):
         self._set_training_epoch_start(data_loader)
-        losses = AverageMeter()
         for batch_index, data in enumerate(data_loader):
             self.batch_index = batch_index
             self.train_state = enums.TrainingState.TRAIN_STEP_START
@@ -452,9 +451,10 @@ class Tez:
             config = TezConfig()
         self._init_trainer(train_dataset, valid_dataset, config, **kwargs)
 
+        losses = AverageMeter()
         for _ in range(self.config.epochs):
             self.train_state = enums.TrainingState.EPOCH_START
-            self.train(self.train_loader)
+            self.train(self.train_loader, losses)
             if self.valid_loader and self.config.val_strategy == "epoch":
                 self.validate(self.valid_loader)
             self._step_scheduler_after_epoch()
