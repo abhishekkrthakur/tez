@@ -319,7 +319,7 @@ class Tez:
 
     def _step(self):
         is_bi_mod_acc_zero = (self.batch_index + 1) % self.config.gradient_accumulation_steps == 0
-        is_bi_end = self.batch_index + 1 == self.train_loader
+        is_bi_end = self.batch_index + 1 == len(self.train_loader)
         if is_bi_mod_acc_zero or is_bi_end:
             if self.config.fp16:
                 self.scaler.step(self.optimizer)
@@ -455,7 +455,7 @@ class Tez:
         for _ in range(self.config.epochs):
             self.train_state = enums.TrainingState.EPOCH_START
             self.train(self.train_loader, losses)
-            if self.valid_loader and self.config.val_strategy == "epoch":
+            if self.valid_loader is not None:
                 self.validate(self.valid_loader)
             self._step_scheduler_after_epoch()
             self.train_state = enums.TrainingState.EPOCH_END
