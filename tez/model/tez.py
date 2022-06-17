@@ -52,6 +52,9 @@ class Tez:
         if self.config.device == "cpu":
             device = torch.device("cpu")
             self.num_gpu = 0
+        elif self.config.device == "mps":
+            device = torch.device("mps:0")
+            self.num_gpu = 1
         elif self.config.device == "cuda":
             if torch.cuda.device_count() > 1:
                 if self.local_rank == -1:
