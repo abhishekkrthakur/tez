@@ -5,7 +5,7 @@ from typing import Optional
 @dataclass
 class TezConfig:
     experiment_name = "default"
-    device: Optional[str] = "cuda"  # cuda or cpu
+    device: Optional[str] = "cuda"  # cuda or cpu or mps
 
     # batch sizes
     training_batch_size: Optional[int] = 32
