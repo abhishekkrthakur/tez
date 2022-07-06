@@ -2,6 +2,8 @@ import multiprocessing
 import os
 import time
 import warnings
+from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torch.utils.data import DataLoader
@@ -18,31 +20,48 @@ from .config import TezConfig
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
+@dataclass
 class Tez:
-    def __init__(self, model):
-        self.model = model
-        self.config = None
-        self.train_dataset = None
-        self.valid_dataset = None
-        self.optimizer = None
-        self.scheduler = None
-        self.scaler = None
-        self.current_epoch = 0
-        self.batch_index = 0
-        self.current_train_step = 0
-        self.current_valid_step = 0
-        self.num_gpu = 0
-        self.local_rank = -1
-        self.world_size = 1
-        self._model_state = None
-        self._train_state = None
-        self.metrics_meter = None
-        self.metrics = {}
-        self.metrics["train"] = {}
-        self.metrics["valid"] = {}
-        self.metrics["test"] = {}
-        self.num_train_steps = None
-        self.num_valid_steps = None
+
+    # required stuff
+    model: torch.nn.Module
+
+    # training essentials
+    config: Optional[TezConfig] = None
+    train_dataset = None
+    valid_dataset = None
+    optimizer = None
+    scheduler = None
+
+    # training parameters
+    scaler = None
+    num_gpu: Optional[int] = 0
+    num_train_steps: Optional[int] = None
+    num_valid_steps: Optional[int] = None
+
+    # internals
+    current_epoch = 0
+    train_batch_index = 0
+    valid_batch_index = 0
+    _train_step = 0
+    _valid_step = 0
+    _test_step = 0
+    _model_state = None
+    _train_state = None
+
+    # multi-gpu
+    local_rank = -1
+    world_size = 1
+
+    # metrics
+    train_meter = None
+    valid_meter = None
+
+    metrics = {}
+    metrics["train"] = {}
+    metrics["valid"] = {}
+    metrics["test"] = {}
+    _progress = None
 
     def _configure_model(self):
         local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -117,12 +136,12 @@ class Tez:
         else:
             self.num_valid_steps = None
 
-        _progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
+        self._progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
 
         if "callbacks" in kwargs:
-            self.callbacks = [_progress] + kwargs["callbacks"]
+            self.callbacks = [self._progress] + kwargs["callbacks"]
         else:
-            self.callbacks = [_progress]
+            self.callbacks = [self._progress]
 
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
@@ -234,7 +253,7 @@ class Tez:
         return self.metrics[v_1][v_2]
 
     def update_metrics(self, losses, monitor):
-        if self._model_state.value == "end":
+        if self._model_state == enums.ModelState.END:
             return
         self.metrics[self._model_state.value].update(monitor)
         self.metrics[self._model_state.value]["loss"] = losses.avg
@@ -298,7 +317,7 @@ class Tez:
         return output, loss, metrics
 
     def _zero_grad(self):
-        if self.config.gradient_accumulation_steps == 1 and self.batch_index == 0:
+        if self.config.gradient_accumulation_steps == 1 and self.train_batch_index == 0:
             self.model.zero_grad()
 
     def _backward(self, loss, metrics):
@@ -318,8 +337,8 @@ class Tez:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip_grad_norm)
 
     def _step(self):
-        is_bi_mod_acc_zero = (self.batch_index + 1) % self.config.gradient_accumulation_steps == 0
-        is_bi_end = self.batch_index + 1 == len(self.train_loader)
+        is_bi_mod_acc_zero = (self.train_batch_index + 1) % self.config.gradient_accumulation_steps == 0
+        is_bi_end = self.train_batch_index + 1 == self.train_loader.batch_size
         if is_bi_mod_acc_zero or is_bi_end:
             if self.config.fp16:
                 self.scaler.step(self.optimizer)
@@ -363,51 +382,72 @@ class Tez:
         if self.config.gradient_accumulation_steps > 1:
             self.optimizer.zero_grad()
 
-    def _update_loss_metrics(self, losses, loss, metrics, data_loader):
-        if self.model_state == enums.ModelState.TRAIN:
-            losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
-        else:
-            losses.update(loss.item(), data_loader.batch_size)
-
-        if self.batch_index == 0:
-            self.metrics_meter = {k: AverageMeter() for k in metrics}
-
-        monitor = {}
-        for m_m in self.metrics_meter:
-            self.metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
-            monitor[m_m] = self.metrics_meter[m_m].avg
-        if self.model_state == enums.ModelState.TRAIN:
-            self.current_train_step += 1
-        else:
-            self.current_valid_step += 1
-        self.update_metrics(losses=losses, monitor=monitor)
-        return losses, monitor
-
     def _set_training_epoch_end(self, losses, monitor):
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.TRAIN_EPOCH_END
 
-    def _set_training_state(self):
-        self.model_state = enums.ModelState.TRAIN
-        self.train_state = enums.TrainingState.TRAIN_EPOCH_START
-        self.model.train()
+    def _update_monitor(self, losses, metrics, data_loader):
+        monitor = {}
 
-    def train(self, data_loader, losses):
+        if self._model_state == enums.ModelState.TRAIN:
+            metrics_meter = self.train_meter
+        elif self._model_state == enums.ModelState.VALID:
+            metrics_meter = self.valid_meter
+        else:
+            raise ValueError("Invalid model state")
+
+        for m_m in metrics_meter:
+            metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
+            monitor[m_m] = metrics_meter[m_m].avg
+
+        if self._model_state == enums.ModelState.TRAIN:
+            self.train_meter = metrics_meter
+        elif self._model_state == enums.ModelState.VALID:
+            self.valid_meter = metrics_meter
+        else:
+            raise ValueError("Invalid model state")
+        self.update_metrics(losses=losses, monitor=monitor)
+        return monitor
+
+    def _update_loss_metrics(self, losses, loss, metrics, data_loader):
+        if self._model_state == enums.ModelState.TRAIN:
+            if self.train_batch_index == 0:
+                self.train_meter = {k: AverageMeter() for k in metrics}
+            losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
+        elif self._model_state == enums.ModelState.VALID:
+            if self.valid_batch_index == 0:
+                self.valid_meter = {k: AverageMeter() for k in metrics}
+            losses.update(loss.item(), data_loader.batch_size)
+        else:
+            raise ValueError("Invalid model state")
+
+        monitor = self._update_monitor(losses, metrics, data_loader)
+
+        if self._model_state == enums.ModelState.TRAIN:
+            self._train_step += 1
+        elif self._model_state == enums.ModelState.VALID:
+            self._valid_step += 1
+        else:
+            raise ValueError("Invalid model state")
+        return losses, monitor
+
+    def train(self, data_loader):
         self._set_training_epoch_start(data_loader)
+        losses = AverageMeter()
         for batch_index, data in enumerate(data_loader):
-            self.batch_index = batch_index
+            self.train_batch_index = batch_index
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_step(data)
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
+
             if self.valid_loader and self.config.val_strategy == "batch":
-                if (
-                    self.current_train_step % self.config.val_steps == 0
-                    or self.current_train_step == self.num_train_steps
-                ):
+                if self._train_step % self.config.val_steps == 0 or self._train_step == self.num_train_steps:
                     self.validate(self.valid_loader)
-            if self._model_state.value == "end":
+
+            if self._model_state == enums.ModelState.END:
                 break
+
         self._set_training_epoch_end(losses, monitor)
 
     def _set_validation_epoch_start(self, data_loader):
@@ -421,21 +461,24 @@ class Tez:
     def _set_validation_epoch_end(self, losses, monitor):
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.VALID_EPOCH_END
+        if self.config.val_strategy == "batch" and self._model_state != enums.ModelState.END:
+            self.model_state = enums.ModelState.TRAIN
+            self.train_state = enums.TrainingState.TRAIN_EPOCH_START
+            self.model.train()
 
     def validate(self, data_loader):
         self._set_validation_epoch_start(data_loader)
         losses = AverageMeter()
 
         for batch_index, data in enumerate(data_loader):
-            self.batch_index = batch_index
+            self.valid_batch_index = batch_index
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.predict_step(data)
+            losses.update(loss.item(), data_loader.batch_size)
             losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
             self.train_state = enums.TrainingState.VALID_STEP_END
         self._set_validation_epoch_end(losses, monitor)
-        if self.config.val_strategy == "batch" and self._model_state.value != "end":
-            self._set_training_state()
 
     def _step_scheduler_after_epoch(self):
         if self.scheduler is not None:
@@ -450,16 +493,14 @@ class Tez:
         if config is None:
             config = TezConfig()
         self._init_trainer(train_dataset, valid_dataset, config, **kwargs)
-
-        losses = AverageMeter()
         for _ in range(self.config.epochs):
             self.train_state = enums.TrainingState.EPOCH_START
-            self.train(self.train_loader, losses)
-            if self.valid_loader is not None:
+            self.train(self.train_loader)
+            if self.valid_loader and self.config.val_strategy == "epoch":
                 self.validate(self.valid_loader)
             self._step_scheduler_after_epoch()
             self.train_state = enums.TrainingState.EPOCH_END
-            if self._model_state.value == "end":
+            if self._model_state == enums.ModelState.END:
                 time.sleep(2)
                 break
             self.current_epoch += 1
@@ -473,6 +514,8 @@ class Tez:
         return output
 
     def predict(self, dataset, **kwargs):
+
+        self.model_state = enums.ModelState.TEST
 
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]

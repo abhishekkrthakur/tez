@@ -16,6 +16,7 @@ class EarlyStopping(Callback):
         self.delta = delta
         self.save_weights_only = save_weights_only
         self.model_path = model_path
+        self.history = []
         if self.mode == "min":
             self.val_score = np.Inf
         else:
@@ -42,7 +43,7 @@ class EarlyStopping(Callback):
             self.save_checkpoint(epoch_score, tez_trainer)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            logger.info("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
+            logger.info(f"EarlyStopping counter: {self.counter}/{self.patience}")
             if self.counter >= self.patience:
                 tez_trainer.model_state = enums.ModelState.END
         else:
@@ -62,6 +63,8 @@ class EarlyStopping(Callback):
 
     def save_checkpoint(self, epoch_score, tez_trainer):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            logger.info("\nScore improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
+            improvement_string = f"{self.val_score:.5f} -> {epoch_score:.5f}. Saving model!"
+            logger.info(improvement_string)
+            self.history.append(improvement_string)
             tez_trainer.save(self.model_path, weights_only=self.save_weights_only)
         self.val_score = epoch_score

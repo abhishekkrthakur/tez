@@ -9,11 +9,16 @@ class Progress(Callback):
         self.num_valid_steps = num_valid_steps
         self._train_tqdm = None
         self._valid_tqdm = None
+        self.history = []
 
     def on_train_start(self, tez_trainer, **kwargs):
         self._train_tqdm = tqdm(total=self.num_train_steps)
-        # if self.num_valid_steps:
-        #    self._valid_tqdm = tqdm(total=self.num_valid_steps, leave=False)
+        if self.num_valid_steps:
+            self._valid_tqdm = tqdm(total=self.num_valid_steps, leave=False)
+
+    def on_valid_epoch_start(self, tez_trainer, **kwargs):
+        if self.num_valid_steps:
+            self._valid_tqdm = tqdm(total=self.num_valid_steps, leave=False)
 
     def format_metrics(self, metrics, stage):
         metrics_str = ", ".join(["{}={:.4f}".format(k, v) for k, v in metrics.items() if k not in ("epoch", "steps")])
@@ -31,30 +36,54 @@ class Progress(Callback):
         self._train_tqdm.set_postfix(epoch=tez_trainer.current_epoch, **train_metrics)
         self._train_tqdm.update(1)
 
-    # def on_valid_step_end(self, tez_trainer, **kwargs):
-    #     if self.num_valid_steps is None:
-    #         return
-    #     self._valid_tqdm.update(1)
+    def on_valid_step_end(self, tez_trainer, **kwargs):
+        if self.num_valid_steps is None:
+            return
+        self._valid_tqdm.update(1)
 
     def on_valid_epoch_end(self, tez_trainer, **kwargs):
-        # check if there are any validation metrics
+        if self._valid_tqdm is not None:
+            self._valid_tqdm.close()
+
         if len(tez_trainer.metrics["valid"]) == 0:
             return
 
         train_metrics = tez_trainer.metrics["train"]
         epoch = tez_trainer.current_epoch
-        steps = tez_trainer.current_train_step
-        # train_metrics["batches"] = tez_trainer.current_train_step
+        steps = tez_trainer._train_step
         train_metrics = self.format_metrics(train_metrics, stage="train")
-        # self._train_tqdm.write(train_metrics)
 
         valid_metrics = tez_trainer.metrics["valid"]
         valid_metrics["epoch"] = tez_trainer.current_epoch
-        # valid_metrics["batches"] = tez_trainer.current_train_step
         valid_metrics = self.format_metrics(valid_metrics, stage="valid")
 
         metrics_string = f"{train_metrics} {valid_metrics} [e={epoch} steps={steps}]"
         self._train_tqdm.write(metrics_string)
+
+        metrics = {}
+        metrics["epoch"] = epoch
+        metrics["steps"] = steps
+        metrics["train"] = {k: v for k, v in tez_trainer.metrics["train"].items() if k not in ("epoch", "steps")}
+        metrics["valid"] = {k: v for k, v in tez_trainer.metrics["valid"].items() if k not in ("epoch", "steps")}
+        self.history.append(metrics)
+
+    def on_train_epoch_end(self, tez_trainer, **kwargs):
+        if self._valid_tqdm is not None:
+            return
+
+        train_metrics = tez_trainer.metrics["train"]
+        epoch = tez_trainer.current_epoch
+        steps = tez_trainer._train_step
+        train_metrics = self.format_metrics(train_metrics, stage="train")
+
+        metrics_string = f"{train_metrics} [e={epoch} steps={steps}]"
+        self._train_tqdm.write(metrics_string)
+
+        metrics = {}
+        metrics["epoch"] = epoch
+        metrics["steps"] = steps
+        metrics["train"] = {k: v for k, v in tez_trainer.metrics["train"].items() if k not in ("epoch", "steps")}
+        self.history.append(metrics)
 
     def on_train_end(self, tez_trainer, **kwargs):
         self._train_tqdm.close()
