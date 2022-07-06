@@ -60,7 +60,8 @@ class Progress(Callback):
         valid_metrics = self.format_metrics(valid_metrics, stage="valid")
 
         metrics_string = f"{train_metrics} {valid_metrics} [e={epoch} steps={steps}]"
-        self._train_tqdm.write(metrics_string)
+        if tez_trainer._accel.is_local_main_process:
+            self._train_tqdm.write(metrics_string)
 
         metrics = {}
         metrics["epoch"] = epoch
@@ -79,7 +80,8 @@ class Progress(Callback):
         train_metrics = self.format_metrics(train_metrics, stage="train")
 
         metrics_string = f"{train_metrics} [e={epoch} steps={steps}]"
-        self._train_tqdm.write(metrics_string)
+        if tez_trainer._accel.is_local_main_process:
+            self._train_tqdm.write(metrics_string)
 
         metrics = {}
         metrics["epoch"] = epoch
