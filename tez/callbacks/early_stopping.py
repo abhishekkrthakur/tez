@@ -31,6 +31,7 @@ class EarlyStopping(Callback):
             raise Exception("monitor must start with train_ or valid_")
 
     def check(self, tez_trainer):
+        tez_trainer._accel.wait_for_everyone()
         epoch_score = tez_trainer.metrics[self.model_state][self.monitor_value]
         if self.mode == "min":
             score = -1.0 * epoch_score
@@ -42,7 +43,7 @@ class EarlyStopping(Callback):
             self.save_checkpoint(epoch_score, tez_trainer)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            logger.info("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
+            tez_trainer._accel.print("EarlyStopping counter: {} out of {}".format(self.counter, self.patience))
             if self.counter >= self.patience:
                 tez_trainer.model_state = enums.ModelState.END
         else:
@@ -61,7 +62,8 @@ class EarlyStopping(Callback):
         self.check(tez_trainer)
 
     def save_checkpoint(self, epoch_score, tez_trainer):
+        tez_trainer._accel.wait_for_everyone()
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
-            logger.info("\nScore improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
+            tez_trainer._accel.print("\nScore improved ({} --> {}). Saving model!".format(self.val_score, epoch_score))
             tez_trainer.save(self.model_path, weights_only=self.save_weights_only)
         self.val_score = epoch_score

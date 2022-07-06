@@ -3,4 +3,4 @@ from .model import Tez, TezConfig
 from .model.model import Model
 
 
-__version__ = "0.6.8"
+__version__ = "0.7.0"

@@ -11,7 +11,7 @@ class Progress(Callback):
         self._valid_tqdm = None
 
     def on_train_start(self, tez_trainer, **kwargs):
-        self._train_tqdm = tqdm(total=self.num_train_steps)
+        self._train_tqdm = tqdm(total=self.num_train_steps, disable=not tez_trainer._accelerator.is_local_main_process)
         # if self.num_valid_steps:
         #    self._valid_tqdm = tqdm(total=self.num_valid_steps, leave=False)
 
