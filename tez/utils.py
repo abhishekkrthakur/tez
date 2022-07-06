@@ -37,6 +37,9 @@ class AverageMeter:
         self.count += n
         self.avg = self.sum / self.count
 
+    def __repr__(self) -> str:
+        return f"AverageMeter(val={self.val}, avg={self.avg}, sum={self.sum}, count={self.count})"
+
 
 def seed_everything(seed: int):
     random.seed(seed)

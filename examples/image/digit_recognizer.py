@@ -175,7 +175,7 @@ if __name__ == "__main__":
     es = EarlyStopping(
         monitor="valid_accuracy",
         model_path=os.path.join(args.output, "model.bin"),
-        patience=10,
+        patience=3,
         mode="max",
         save_weights_only=True,
     )
