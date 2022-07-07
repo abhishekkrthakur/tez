@@ -4,6 +4,10 @@ from tez import enums
 from tez.callbacks import Callback
 from tez.logger import logger
 
+from accelerate.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class EarlyStopping(Callback):
     def __init__(self, monitor, model_path, patience=5, mode="min", delta=0.001, save_weights_only=False):
@@ -43,7 +47,7 @@ class EarlyStopping(Callback):
             self.save_checkpoint(epoch_score, tez_trainer)
         elif score < self.best_score + self.delta:
             self.counter += 1
-            tez_trainer._accel.print(f"EarlyStopping counter: {self.counter}/{self.patience}")
+            logger.info(f"EarlyStopping counter: {self.counter}/{self.patience}")
             if self.counter >= self.patience:
                 tez_trainer.model_state = enums.ModelState.END
         else:
@@ -64,7 +68,7 @@ class EarlyStopping(Callback):
     def save_checkpoint(self, epoch_score, tez_trainer):
         if epoch_score not in [-np.inf, np.inf, -np.nan, np.nan]:
             improvement_string = f"{self.val_score:.5f} -> {epoch_score:.5f}. Saving model!"
-            tez_trainer._accel.print(improvement_string)
+            logger.info(improvement_string)
             self.history.append(improvement_string)
             tez_trainer.save(self.model_path, weights_only=self.save_weights_only)
         self.val_score = epoch_score
