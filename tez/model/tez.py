@@ -291,7 +291,10 @@ class Tez:
     def _set_training_epoch_start(self, data_loader):
         self.model_state = enums.ModelState.TRAIN
         self.train_state = enums.TrainingState.TRAIN_EPOCH_START
-        self.train_loader_bs = data_loader.batch_sampler.batch_size
+        try:
+            self.train_loader_bs = data_loader.batch_sampler.batch_size
+        except AttributeError:
+            self.train_loader_bs = data_loader._loader.batch_sampler.batch_size
         self.model.train()
         if self.config.gradient_accumulation_steps > 1:
             self.optimizer.zero_grad()
@@ -370,7 +373,10 @@ class Tez:
     def _set_validation_epoch_start(self, data_loader):
         self.train_state = enums.TrainingState.VALID_EPOCH_START
         self.model_state = enums.ModelState.VALID
-        self.valid_loader_bs = data_loader.batch_sampler.batch_size
+        try:
+            self.valid_loader_bs = data_loader.batch_sampler.batch_size
+        except AttributeError:
+            self.valid_loader_bs = data_loader._loader.batch_sampler.batch_size
         self.model.eval()
 
     def _set_validation_epoch_end(self, losses, monitor):
