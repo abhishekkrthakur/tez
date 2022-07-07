@@ -64,12 +64,15 @@ class Tez:
     metrics["test"] = {}
     _progress = None
 
+    def _init_accel(self):
+        self._accel = Accelerator(device_placement=True)
+        self.config.device = self._accel.device
+
     def _init_trainer(self, train_dataset, valid_dataset, config, **kwargs):
         self.config = config
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
-        self._accel = Accelerator(device_placement=True)
-        self.config.device = self._accel.device
+        self._init_accel()
 
         if "train_loader" in kwargs:
             self.train_loader = kwargs["train_loader"]
@@ -433,6 +436,7 @@ class Tez:
     def predict(self, dataset, **kwargs):
 
         self.model_state = enums.ModelState.TEST
+        self._init_accel()
 
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]
@@ -474,13 +478,16 @@ class Tez:
             sampler=sampler,
             collate_fn=collate_fn,
             pin_memory=pin_memory,
+            drop_last=False,
         )
 
-        if self.model.training:
-            self.model.eval()
+        self.model, data_loader = self._accel.prepare(self.model, data_loader)
+
+        self.model.eval()
 
         for data in data_loader:
             with torch.no_grad():
                 out, _, _ = self.model_fn(data)
+                out = self._accel.gather(out)
                 out = self.process_output(out)
                 yield out
