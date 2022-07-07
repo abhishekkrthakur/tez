@@ -45,7 +45,7 @@ class SorghumModel(nn.Module):
         )
 
     def monitor_metrics(self, outputs, targets):
-        device = targets.get_device()
+        device = targets.device.type
         outputs = np.argmax(outputs.cpu().detach().numpy(), axis=1)
         targets = targets.cpu().detach().numpy()
         acc = metrics.accuracy_score(targets, outputs)

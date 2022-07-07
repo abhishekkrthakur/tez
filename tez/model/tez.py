@@ -1,13 +1,12 @@
 import multiprocessing
-import os
 import time
 import warnings
 from dataclasses import dataclass
 from typing import Optional
 
 import torch
+from accelerate import Accelerator
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 
 from tez import enums
 from tez.callbacks import CallbackRunner, Progress
@@ -48,6 +47,8 @@ class Tez:
     _test_step = 0
     _model_state = None
     _train_state = None
+    train_loader_bs = None
+    valid_loader_bs = None
 
     # multi-gpu
     local_rank = -1
@@ -63,43 +64,15 @@ class Tez:
     metrics["test"] = {}
     _progress = None
 
-    def _configure_model(self):
-        local_rank = int(os.environ.get("LOCAL_RANK", -1))
-        if local_rank != -1 and local_rank != self.local_rank:
-            self.local_rank = local_rank
-
-        if self.config.device == "cpu":
-            device = torch.device("cpu")
-            self.num_gpu = 0
-        elif self.config.device == "cuda":
-            if torch.cuda.device_count() > 1:
-                if self.local_rank == -1:
-                    device = torch.device("cuda:0")
-                    self.num_gpu = torch.cuda.device_count()
-                    self.model = torch.nn.DataParallel(self.model, device_ids=list(range(self.num_gpu)))
-                else:
-                    torch.distributed.init_process_group(backend="nccl")
-                    self.world_size = torch.distributed.get_world_size()
-                    device = torch.device("cuda", self.local_rank)
-                    self.model.to(device)
-                    self.model = torch.nn.parallel.DistributedDataParallel(
-                        self.model,
-                        device_ids=[self.local_rank],
-                        output_device=self.local_rank,
-                    )
-                    self.num_gpu = 1
-            else:
-                logger.info("Using single GPU")
-                device = torch.device("cuda:0")
-                self.num_gpu = 1
-
-        if self.local_rank == -1:
-            self.model.to(device)
+    def _init_accel(self):
+        self._accel = Accelerator(device_placement=True)
+        self.config.device = self._accel.device
 
     def _init_trainer(self, train_dataset, valid_dataset, config, **kwargs):
         self.config = config
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
+        self._init_accel()
 
         if "train_loader" in kwargs:
             self.train_loader = kwargs["train_loader"]
@@ -148,20 +121,6 @@ class Tez:
             if self.config.num_jobs > 4:
                 self.config.num_jobs -= 2
 
-        if self.world_size > 1 and self.train_sampler is None:
-            self.train_sampler = DistributedSampler(
-                self.train_dataset,
-                num_replicas=self.world_size,
-                rank=self.local_rank,
-            )
-
-        if self.world_size > 1 and self.valid_sampler is None:
-            self.valid_sampler = DistributedSampler(
-                self.valid_dataset,
-                num_replicas=self.world_size,
-                rank=self.local_rank,
-            )
-
         if self.train_loader is None:
             self.train_loader = DataLoader(
                 self.train_dataset,
@@ -189,39 +148,20 @@ class Tez:
 
         self.optimizer, self.scheduler = self.model.optimizer_scheduler()
 
-        if self.config.fp16:
-            self.scaler = torch.cuda.amp.GradScaler()
-
-        self._callback_runner = CallbackRunner(self.callbacks, self)
-        self._configure_model()
-        self.train_state = enums.TrainingState.TRAIN_START
-
         if self.optimizer is None:
             raise Exception("No optimizer found")
 
-        if self.local_rank != -1:
-            if torch.distributed.get_rank() == 0:
-                logger.info(f"\n{self.config}")
-                if self.scheduler is None:
-                    logger.warning("No scheduler found. Continuing without scheduler")
+        if self.valid_loader is not None:
+            self.model, self.optimizer, self.train_loader, self.valid_loader = self._accel.prepare(
+                self.model, self.optimizer, self.train_loader, self.valid_loader
+            )
         else:
-            logger.info(f"\n{self.config}")
-            if self.scheduler is None:
-                logger.warning("No scheduler found. Continuing without scheduler")
+            self.model, self.optimizer, self.train_loader = self._accel.prepare(
+                self.model, self.optimizer, self.train_loader
+            )
 
-    def _init_load_weights(self, config):
-        self.config = config
-        if self.config.device == "cpu":
-            device = torch.device("cpu")
-        elif self.config.device == "cuda":
-            device = torch.device("cuda:0")
-        else:
-            raise Exception("Unknown device. Please use 'cpu' or 'cuda'")
-
-        if next(self.model.parameters()).device != device:
-            self.model.to(device)
-
-        return device
+        self._callback_runner = CallbackRunner(self.callbacks, self)
+        self.train_state = enums.TrainingState.TRAIN_START
 
     @property
     def model_state(self):
@@ -239,10 +179,7 @@ class Tez:
     def train_state(self, value):
         self._train_state = value
         if self._callback_runner is not None:
-            if self.local_rank != -1:
-                if torch.distributed.get_rank() == 0:
-                    self._callback_runner(value)
-            else:
+            if self._accel.is_local_main_process:
                 self._callback_runner(value)
 
     def name_to_metric(self, metric_name):
@@ -259,17 +196,15 @@ class Tez:
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def save(self, model_path, weights_only=False):
-        if self.local_rank != -1 or self.num_gpu > 1:
-            model_state_dict = self.model.module.state_dict()
-        else:
-            model_state_dict = self.model.state_dict()
+        # self._accel.wait_for_everyone()
+        model_state_dict = self._accel.unwrap_model(self.model).state_dict()
 
         if weights_only:
-            if self.local_rank != -1 and self.num_gpu > 1:
-                if torch.distributed.get_rank() == 0:
-                    torch.save(model_state_dict, model_path)
-            else:
-                torch.save(model_state_dict, model_path)
+            if self._accel.is_main_process:
+                self._accel.save(
+                    model_state_dict,
+                    model_path,
+                )
             return
 
         if self.optimizer is not None:
@@ -288,49 +223,38 @@ class Tez:
         model_dict["scheduler"] = sch_state_dict
         model_dict["config"] = self.config
 
-        if self.local_rank != -1 and self.num_gpu > 1:
-            if torch.distributed.get_rank() == 0:
-                torch.save(model_dict, model_path)
-        else:
-            torch.save(model_dict, model_path)
+        if self._accel.is_main_process:
+            self._accel.save(
+                model_dict,
+                model_path,
+            )
 
     def load(self, model_path, weights_only=False, config: TezConfig = None):
         if config is None:
             config = TezConfig()
 
-        device = self._init_load_weights(config)
+        self._accel.wait_for_everyone()
 
-        model_dict = torch.load(model_path, map_location=device)
+        model_dict = torch.load(model_path, map_location="cpu")
         if weights_only:
-            self.model.load_state_dict(model_dict)
+            self._accel.unwrap_model(self.model).load_state_dict(model_dict)
         else:
-            self.model.load_state_dict(model_dict["state_dict"])
+            self._accel.unwrap_model(self.model).load_state_dict(model_dict["state_dict"])
+            self.optimizer.load_state_dict(model_dict["optimizer"])
 
     def model_fn(self, data):
-        for key, value in data.items():
-            data[key] = value.to(self.config.device)
-        if self.config.fp16:
-            with torch.cuda.amp.autocast():
-                output, loss, metrics = self.model(**data)
-        else:
-            output, loss, metrics = self.model(**data)
+        output, loss, metrics = self.model(**data)
+        metrics = self._accel.gather(metrics)
+        metrics = {key: value.mean() for key, value in metrics.items()}
         return output, loss, metrics
 
     def _zero_grad(self):
         if self.config.gradient_accumulation_steps == 1 and self.train_batch_index == 0:
             self.model.zero_grad()
 
-    def _backward(self, loss, metrics):
-        if self.num_gpu > 1:
-            loss = loss.mean()
-            for metric in metrics:
-                metrics[metric] = metrics[metric].mean()
+    def _backward(self, loss):
         loss = loss / self.config.gradient_accumulation_steps
-
-        if self.config.fp16:
-            self.scaler.scale(loss).backward()
-        else:
-            loss.backward()
+        self._accel.backward(loss)
 
     def _clip_grad_norm(self):
         if self.config.clip_grad_norm != -1:
@@ -338,13 +262,10 @@ class Tez:
 
     def _step(self):
         is_bi_mod_acc_zero = (self.train_batch_index + 1) % self.config.gradient_accumulation_steps == 0
-        is_bi_end = self.train_batch_index + 1 == self.train_loader.batch_size
+        is_bi_end = self.train_batch_index + 1 == self.train_loader_bs
         if is_bi_mod_acc_zero or is_bi_end:
-            if self.config.fp16:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                self.optimizer.step()
+
+            self.optimizer.step()
 
             if self.scheduler is not None:
                 if self.config.step_scheduler_after == "batch":
@@ -359,25 +280,24 @@ class Tez:
     def train_step(self, data):
         self._zero_grad()
         _, loss, metrics = self.model_fn(data)
-        self._backward(loss, metrics)
+        self._backward(loss)
         self._clip_grad_norm()
         self._step()
         return loss, metrics
 
     def predict_step(self, data):
         _, loss, metrics = self.model_fn(data)
-        if self.num_gpu > 1:
-            loss = loss.mean()
-            for metric in metrics:
-                metrics[metric] = metrics[metric].mean()
+        metrics = self._accel.gather(metrics)
+        metrics = {key: value.mean() for key, value in metrics.items()}
         return loss, metrics
 
     def _set_training_epoch_start(self, data_loader):
-        if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
-            data_loader.sampler.set_epoch(self.current_epoch)
-
         self.model_state = enums.ModelState.TRAIN
         self.train_state = enums.TrainingState.TRAIN_EPOCH_START
+        try:
+            self.train_loader_bs = data_loader.batch_sampler.batch_size
+        except AttributeError:
+            self.train_loader_bs = data_loader._loader.batch_sampler.batch_size
         self.model.train()
         if self.config.gradient_accumulation_steps > 1:
             self.optimizer.zero_grad()
@@ -386,18 +306,20 @@ class Tez:
         self.update_metrics(losses=losses, monitor=monitor)
         self.train_state = enums.TrainingState.TRAIN_EPOCH_END
 
-    def _update_monitor(self, losses, metrics, data_loader):
+    def _update_monitor(self, losses, metrics):
         monitor = {}
 
         if self._model_state == enums.ModelState.TRAIN:
             metrics_meter = self.train_meter
+            _bs = self.train_loader_bs
         elif self._model_state == enums.ModelState.VALID:
             metrics_meter = self.valid_meter
+            _bs = self.valid_loader_bs
         else:
             raise ValueError("Invalid model state")
 
         for m_m in metrics_meter:
-            metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), data_loader.batch_size)
+            metrics_meter[m_m].update(metrics[m_m].cpu().detach().numpy(), _bs)
             monitor[m_m] = metrics_meter[m_m].avg
 
         if self._model_state == enums.ModelState.TRAIN:
@@ -409,19 +331,20 @@ class Tez:
         self.update_metrics(losses=losses, monitor=monitor)
         return monitor
 
-    def _update_loss_metrics(self, losses, loss, metrics, data_loader):
+    def _update_loss_metrics(self, losses, loss, metrics):
         if self._model_state == enums.ModelState.TRAIN:
             if self.train_batch_index == 0:
                 self.train_meter = {k: AverageMeter() for k in metrics}
-            losses.update(loss.item() * self.config.gradient_accumulation_steps, data_loader.batch_size)
+            losses.update(loss.item() * self.config.gradient_accumulation_steps, self.train_loader_bs)
         elif self._model_state == enums.ModelState.VALID:
             if self.valid_batch_index == 0:
                 self.valid_meter = {k: AverageMeter() for k in metrics}
-            losses.update(loss.item(), data_loader.batch_size)
+            loss = self._accel.gather(loss).mean()
+            losses.update(loss.item(), self.valid_loader_bs)
         else:
             raise ValueError("Invalid model state")
 
-        monitor = self._update_monitor(losses, metrics, data_loader)
+        monitor = self._update_monitor(losses, metrics)
 
         if self._model_state == enums.ModelState.TRAIN:
             self._train_step += 1
@@ -438,7 +361,7 @@ class Tez:
             self.train_batch_index = batch_index
             self.train_state = enums.TrainingState.TRAIN_STEP_START
             loss, metrics = self.train_step(data)
-            losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
+            losses, monitor = self._update_loss_metrics(losses, loss, metrics)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
 
             if self.valid_loader and self.config.val_strategy == "batch":
@@ -451,11 +374,12 @@ class Tez:
         self._set_training_epoch_end(losses, monitor)
 
     def _set_validation_epoch_start(self, data_loader):
-        if isinstance(data_loader, DataLoader) and isinstance(data_loader.sampler, DistributedSampler):
-            data_loader.sampler.set_epoch(self.current_epoch)
-
         self.train_state = enums.TrainingState.VALID_EPOCH_START
         self.model_state = enums.ModelState.VALID
+        try:
+            self.valid_loader_bs = data_loader.batch_sampler.batch_size
+        except AttributeError:
+            self.valid_loader_bs = data_loader._loader.batch_sampler.batch_size
         self.model.eval()
 
     def _set_validation_epoch_end(self, losses, monitor):
@@ -475,8 +399,7 @@ class Tez:
             self.train_state = enums.TrainingState.VALID_STEP_START
             with torch.no_grad():
                 loss, metrics = self.predict_step(data)
-            losses.update(loss.item(), data_loader.batch_size)
-            losses, monitor = self._update_loss_metrics(losses, loss, metrics, data_loader)
+            losses, monitor = self._update_loss_metrics(losses, loss, metrics)
             self.train_state = enums.TrainingState.VALID_STEP_END
         self._set_validation_epoch_end(losses, monitor)
 
@@ -505,9 +428,6 @@ class Tez:
                 break
             self.current_epoch += 1
         self.train_state = enums.TrainingState.TRAIN_END
-        # TODO: do we need this?
-        # if self.local_rank != -1:
-        #    torch.distributed.barrier()
 
     def process_output(self, output):
         output = output.cpu().detach().numpy()
@@ -516,6 +436,7 @@ class Tez:
     def predict(self, dataset, **kwargs):
 
         self.model_state = enums.ModelState.TEST
+        self._init_accel()
 
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]
@@ -557,13 +478,16 @@ class Tez:
             sampler=sampler,
             collate_fn=collate_fn,
             pin_memory=pin_memory,
+            drop_last=False,
         )
 
-        if self.model.training:
-            self.model.eval()
+        self.model, data_loader = self._accel.prepare(self.model, data_loader)
+
+        self.model.eval()
 
         for data in data_loader:
             with torch.no_grad():
                 out, _, _ = self.model_fn(data)
+                out = self._accel.gather(out)
                 out = self.process_output(out)
                 yield out

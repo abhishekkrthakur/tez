@@ -64,7 +64,7 @@ class DigitRecognizerModel(nn.Module):
         )
 
     def monitor_metrics(self, outputs, targets):
-        device = targets.get_device()
+        device = targets.device.type
         outputs = np.argmax(outputs.cpu().detach().numpy(), axis=1)
         targets = targets.cpu().detach().numpy()
         acc = metrics.accuracy_score(targets, outputs)
@@ -191,9 +191,11 @@ if __name__ == "__main__":
 
     preds_iter = model.predict(test_dataset)
     final_preds = []
+
     for preds in preds_iter:
         final_preds.append(preds)
     final_preds = np.vstack(final_preds)
+    final_preds = final_preds[: len(test_dataset), :]
     final_preds = np.argmax(final_preds, axis=1)
 
     df = pd.DataFrame(

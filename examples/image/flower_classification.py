@@ -138,7 +138,7 @@ class FlowerModel(nn.Module):
         self.model.fc = nn.Linear(n_features, num_classes)
 
     def monitor_metrics(self, outputs, targets):
-        device = targets.get_device()
+        device = targets.device.type
         outputs = torch.argmax(outputs, dim=1).cpu().detach().numpy()
         targets = targets.cpu().detach().numpy()
         f1 = metrics.f1_score(targets, outputs, average="macro")
