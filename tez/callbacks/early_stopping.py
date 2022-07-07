@@ -1,10 +1,10 @@
 import numpy as np
+from accelerate.logging import get_logger
 
 from tez import enums
 from tez.callbacks import Callback
 from tez.logger import logger
 
-from accelerate.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -191,6 +191,7 @@ if __name__ == "__main__":
 
     preds_iter = model.predict(test_dataset)
     final_preds = []
+
     for preds in preds_iter:
         final_preds.append(preds)
     final_preds = np.vstack(final_preds)
