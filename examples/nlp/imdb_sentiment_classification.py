@@ -105,7 +105,7 @@ class IMDBModel(nn.Module):
     def monitor_metrics(self, outputs, targets):
         if targets is None:
             return {}
-        device = targets.get_device()
+        device = targets.device.type
         outputs = torch.sigmoid(outputs).cpu().detach().numpy() >= 0.5
         targets = targets.cpu().detach().numpy()
         accuracy = metrics.accuracy_score(targets, outputs)

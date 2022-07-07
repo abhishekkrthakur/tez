@@ -14,9 +14,7 @@ class Progress(Callback):
     def on_train_start(self, tez_trainer, **kwargs):
         self._train_tqdm = tqdm(total=self.num_train_steps, disable=not tez_trainer._accel.is_main_process)
         if self.num_valid_steps:
-            self._valid_tqdm = tqdm(
-                total=self.num_valid_steps, leave=False, disable=not tez_trainer._accel.is_main_process
-            )
+            self._valid_tqdm = tqdm(total=self.num_valid_steps, disable=not tez_trainer._accel.is_main_process)
 
     def on_valid_epoch_start(self, tez_trainer, **kwargs):
         if self.num_valid_steps:
