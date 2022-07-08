@@ -14,6 +14,6 @@ _This library is in early-stage currently! So, there might be breaking changes._
 - faster prototyping
 - production ready
 
-Currently, tez supports cpu, single gpu and multi-gpu training. More coming soon!
+Currently, tez supports cpu, single gpu and multi-gpu & tpu training. More coming soon!
 
 Using tez is super-easy. We don't want you to be far away from pytorch. So, you do everything on your own and just use tez to make a few things simpler.
