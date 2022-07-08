@@ -183,7 +183,7 @@ if __name__ == "__main__":
     model.fit(
         train_dataset,
         valid_dataset=valid_dataset,
-        callbacks=[es],
+        # callbacks=[es],
         config=config,
     )
 

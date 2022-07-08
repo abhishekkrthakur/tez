@@ -49,6 +49,7 @@ class Tez:
     _train_state = None
     train_loader_bs = None
     valid_loader_bs = None
+    _accel = None
 
     # multi-gpu
     local_rank = -1
@@ -65,7 +66,15 @@ class Tez:
     _progress = None
 
     def _init_accel(self):
-        self._accel = Accelerator(device_placement=True)
+        if self.config.fp16 is True:
+            mixed_precision = "fp16"
+        else:
+            mixed_precision = "no"
+        self._accel = Accelerator(
+            device_placement=True,
+            step_scheduler_with_optimizer=False,
+            mixed_precision=mixed_precision,
+        )
         self.config.device = self._accel.device
 
     def _init_trainer(self, train_dataset, valid_dataset, config, **kwargs):
@@ -103,19 +112,6 @@ class Tez:
         else:
             self.valid_collate_fn = None
 
-        self.num_train_steps = int(len(self.train_dataset) / self.config.training_batch_size * self.config.epochs)
-        if self.valid_dataset:
-            self.num_valid_steps = int(len(self.valid_dataset) / self.config.validation_batch_size)
-        else:
-            self.num_valid_steps = None
-
-        self._progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
-
-        if "callbacks" in kwargs:
-            self.callbacks = [self._progress] + kwargs["callbacks"]
-        else:
-            self.callbacks = [self._progress]
-
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
             if self.config.num_jobs > 4:
@@ -151,14 +147,35 @@ class Tez:
         if self.optimizer is None:
             raise Exception("No optimizer found")
 
-        if self.valid_loader is not None:
+        if self.valid_loader is not None and self.scheduler is not None:
+            self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler = self._accel.prepare(
+                self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler
+            )
+        elif self.valid_loader is not None and self.scheduler is None:
             self.model, self.optimizer, self.train_loader, self.valid_loader = self._accel.prepare(
                 self.model, self.optimizer, self.train_loader, self.valid_loader
+            )
+        elif self.valid_loader is None and self.scheduler is not None:
+            self.model, self.optimizer, self.train_loader, self.scheduler = self._accel.prepare(
+                self.model, self.optimizer, self.train_loader, self.scheduler
             )
         else:
             self.model, self.optimizer, self.train_loader = self._accel.prepare(
                 self.model, self.optimizer, self.train_loader
             )
+
+        self.num_train_steps = int(len(self.train_loader) * self.config.epochs)
+        if self.valid_dataset:
+            self.num_valid_steps = len(self.valid_loader)
+        else:
+            self.num_valid_steps = None
+
+        self._progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
+
+        if "callbacks" in kwargs:
+            self.callbacks = [self._progress] + kwargs["callbacks"]
+        else:
+            self.callbacks = [self._progress]
 
         self._callback_runner = CallbackRunner(self.callbacks, self)
         self.train_state = enums.TrainingState.TRAIN_START
@@ -196,7 +213,6 @@ class Tez:
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def save(self, model_path, weights_only=False):
-        # self._accel.wait_for_everyone()
         model_state_dict = self._accel.unwrap_model(self.model).state_dict()
 
         if weights_only:
@@ -231,7 +247,12 @@ class Tez:
 
     def load(self, model_path, weights_only=False, config: TezConfig = None):
         if config is None:
-            config = TezConfig()
+            self.config = TezConfig()
+        else:
+            self.config = config
+
+        if self._accel is None:
+            self._init_accel()
 
         self._accel.wait_for_everyone()
 
