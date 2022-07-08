@@ -85,7 +85,7 @@ class Tez:
         
         # parse args
         self.train_loader = kwargs.get("train_loader", None)
-        self.valid_loader = kwargs.get("valid_loader"
+        self.valid_loader = kwargs.get("valid_loader", None)
         self.train_sampler = kwargs.get("train_sampler", None)
         self.valid_sampler = kwargs.get("valid_sampler", None)
         self.train_collate_fn = kwargs.get("train_collate_fn", None)
