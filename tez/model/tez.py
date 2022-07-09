@@ -66,8 +66,13 @@ class Tez:
     _progress = None
 
     def _init_accel(self):
+        if self.config.fp16 is True and self.config.bf16 is True:
+            raise ValueError("Only one of fp16 and bf16 can be True")
+
         if self.config.fp16 is True:
             mixed_precision = "fp16"
+        elif self.config.bf16 is True:
+            mixed_precision = "bf16"
         else:
             mixed_precision = "no"
         self._accel = Accelerator(

@@ -18,6 +18,7 @@ class TezConfig:
     clip_grad_norm: Optional[float] = -1
     num_jobs: Optional[int] = -1
     fp16: Optional[bool] = False
+    bf16: Optional[bool] = False
 
     # data loader parameters
     train_shuffle: Optional[bool] = True
