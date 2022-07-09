@@ -87,35 +87,14 @@ class Tez:
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
         self._init_accel()
-
-        if "train_loader" in kwargs:
-            self.train_loader = kwargs["train_loader"]
-        else:
-            self.train_loader = None
-        if "valid_loader" in kwargs:
-            self.valid_loader = kwargs["valid_loader"]
-        else:
-            self.valid_loader = None
-
-        if "train_sampler" in kwargs:
-            self.train_sampler = kwargs["train_sampler"]
-        else:
-            self.train_sampler = None
-
-        if "valid_sampler" in kwargs:
-            self.valid_sampler = kwargs["valid_sampler"]
-        else:
-            self.valid_sampler = None
-
-        if "train_collate_fn" in kwargs:
-            self.train_collate_fn = kwargs["train_collate_fn"]
-        else:
-            self.train_collate_fn = None
-
-        if "valid_collate_fn" in kwargs:
-            self.valid_collate_fn = kwargs["valid_collate_fn"]
-        else:
-            self.valid_collate_fn = None
+        
+        # parse args
+        self.train_loader = kwargs.get("train_loader", None)
+        self.valid_loader = kwargs.get("valid_loader", None)
+        self.train_sampler = kwargs.get("train_sampler", None)
+        self.valid_sampler = kwargs.get("valid_sampler", None)
+        self.train_collate_fn = kwargs.get("train_collate_fn", None)
+        self.valid_collate_fn = kwargs.get("valid_collate_fn", None)
 
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
