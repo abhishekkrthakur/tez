@@ -49,7 +49,7 @@ class Tez:
     _train_state = None
     train_loader_bs = None
     valid_loader_bs = None
-    _accel = None
+    _driver = None
 
     # multi-gpu
     local_rank = -1
@@ -65,7 +65,7 @@ class Tez:
     metrics["test"] = {}
     _progress = None
 
-    def _init_accel(self):
+    def _init_driver(self):
         if self.config.fp16 is True and self.config.bf16 is True:
             raise ValueError("Only one of fp16 and bf16 can be True")
 
@@ -75,19 +75,20 @@ class Tez:
             mixed_precision = "bf16"
         else:
             mixed_precision = "no"
-        self._accel = Accelerator(
+        self._driver = Accelerator(
             device_placement=True,
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
+            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
         )
-        self.config.device = self._accel.device
+        self.config.device = self._driver.device
 
     def _init_trainer(self, train_dataset, valid_dataset, config, **kwargs):
         self.config = config
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
-        self._init_accel()
-        
+        self._init_driver()
+
         # parse args
         self.train_loader = kwargs.get("train_loader", None)
         self.valid_loader = kwargs.get("valid_loader", None)
@@ -132,19 +133,19 @@ class Tez:
             raise Exception("No optimizer found")
 
         if self.valid_loader is not None and self.scheduler is not None:
-            self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler = self._accel.prepare(
+            self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler
             )
         elif self.valid_loader is not None and self.scheduler is None:
-            self.model, self.optimizer, self.train_loader, self.valid_loader = self._accel.prepare(
+            self.model, self.optimizer, self.train_loader, self.valid_loader = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.valid_loader
             )
         elif self.valid_loader is None and self.scheduler is not None:
-            self.model, self.optimizer, self.train_loader, self.scheduler = self._accel.prepare(
+            self.model, self.optimizer, self.train_loader, self.scheduler = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.scheduler
             )
         else:
-            self.model, self.optimizer, self.train_loader = self._accel.prepare(
+            self.model, self.optimizer, self.train_loader = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader
             )
 
@@ -180,7 +181,7 @@ class Tez:
     def train_state(self, value):
         self._train_state = value
         if self._callback_runner is not None:
-            if self._accel.is_local_main_process:
+            if self._driver.is_local_main_process:
                 self._callback_runner(value)
 
     def name_to_metric(self, metric_name):
@@ -197,11 +198,11 @@ class Tez:
         self.metrics[self._model_state.value]["loss"] = losses.avg
 
     def save(self, model_path, weights_only=False):
-        model_state_dict = self._accel.unwrap_model(self.model).state_dict()
+        model_state_dict = self._driver.unwrap_model(self.model).state_dict()
 
         if weights_only:
-            if self._accel.is_main_process:
-                self._accel.save(
+            if self._driver.is_main_process:
+                self._driver.save(
                     model_state_dict,
                     model_path,
                 )
@@ -223,8 +224,8 @@ class Tez:
         model_dict["scheduler"] = sch_state_dict
         model_dict["config"] = self.config
 
-        if self._accel.is_main_process:
-            self._accel.save(
+        if self._driver.is_main_process:
+            self._driver.save(
                 model_dict,
                 model_path,
             )
@@ -235,64 +236,58 @@ class Tez:
         else:
             self.config = config
 
-        if self._accel is None:
-            self._init_accel()
+        if self._driver is None:
+            self._init_driver()
 
-        self._accel.wait_for_everyone()
+        self._driver.wait_for_everyone()
 
         model_dict = torch.load(model_path, map_location="cpu")
         if weights_only:
-            self._accel.unwrap_model(self.model).load_state_dict(model_dict)
+            self._driver.unwrap_model(self.model).load_state_dict(model_dict)
         else:
-            self._accel.unwrap_model(self.model).load_state_dict(model_dict["state_dict"])
+            self._driver.unwrap_model(self.model).load_state_dict(model_dict["state_dict"])
             self.optimizer.load_state_dict(model_dict["optimizer"])
 
     def model_fn(self, data):
         output, loss, metrics = self.model(**data)
-        metrics = self._accel.gather(metrics)
+        metrics = self._driver.gather(metrics)
         metrics = {key: value.mean() for key, value in metrics.items()}
         return output, loss, metrics
 
     def _zero_grad(self):
-        if self.config.gradient_accumulation_steps == 1 and self.train_batch_index == 0:
-            self.model.zero_grad()
+        self.optimizer.zero_grad()
 
     def _backward(self, loss):
-        loss = loss / self.config.gradient_accumulation_steps
-        self._accel.backward(loss)
+        self._driver.backward(loss)
 
     def _clip_grad_norm(self):
         if self.config.clip_grad_norm != -1:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip_grad_norm)
 
     def _step(self):
-        is_bi_mod_acc_zero = (self.train_batch_index + 1) % self.config.gradient_accumulation_steps == 0
-        is_bi_end = self.train_batch_index + 1 == self.train_loader_bs
-        if is_bi_mod_acc_zero or is_bi_end:
+        self.optimizer.step()
 
-            self.optimizer.step()
-
-            if self.scheduler is not None:
-                if self.config.step_scheduler_after == "batch":
-                    if self.config.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.config.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
-
-            self.model.zero_grad()
+        if self.scheduler is not None:
+            if self.config.step_scheduler_after == "batch":
+                if self.config.step_scheduler_metric is None:
+                    self.scheduler.step()
+                else:
+                    step_metric = self.name_to_metric(self.config.step_scheduler_metric)
+                    self.scheduler.step(step_metric)
 
     def train_step(self, data):
-        self._zero_grad()
-        _, loss, metrics = self.model_fn(data)
-        self._backward(loss)
-        self._clip_grad_norm()
-        self._step()
+        # self._zero_grad()
+        with self._driver.accumulate(self.model):
+            _, loss, metrics = self.model_fn(data)
+            self._backward(loss)
+            self._clip_grad_norm()
+            self._step()
+            self._zero_grad()
         return loss, metrics
 
     def predict_step(self, data):
         _, loss, metrics = self.model_fn(data)
-        metrics = self._accel.gather(metrics)
+        metrics = self._driver.gather(metrics)
         metrics = {key: value.mean() for key, value in metrics.items()}
         return loss, metrics
 
@@ -304,8 +299,6 @@ class Tez:
         except AttributeError:
             self.train_loader_bs = data_loader._loader.batch_sampler.batch_size
         self.model.train()
-        if self.config.gradient_accumulation_steps > 1:
-            self.optimizer.zero_grad()
 
     def _set_training_epoch_end(self, losses, monitor):
         self.update_metrics(losses=losses, monitor=monitor)
@@ -344,7 +337,7 @@ class Tez:
         elif self._model_state == enums.ModelState.VALID:
             if self.valid_batch_index == 0:
                 self.valid_meter = {k: AverageMeter() for k in metrics}
-            loss = self._accel.gather(loss).mean()
+            loss = self._driver.gather(loss).mean()
             losses.update(loss.item(), self.valid_loader_bs)
         else:
             raise ValueError("Invalid model state")
@@ -441,7 +434,7 @@ class Tez:
     def predict(self, dataset, **kwargs):
 
         self.model_state = enums.ModelState.TEST
-        self._init_accel()
+        self._init_driver()
 
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]
@@ -486,13 +479,13 @@ class Tez:
             drop_last=False,
         )
 
-        self.model, data_loader = self._accel.prepare(self.model, data_loader)
+        self.model, data_loader = self._driver.prepare(self.model, data_loader)
 
         self.model.eval()
 
         for data in data_loader:
             with torch.no_grad():
                 out, _, _ = self.model_fn(data)
-                out = self._accel.gather(out)
+                out = self._driver.gather(out)
                 out = self.process_output(out)
                 yield out
