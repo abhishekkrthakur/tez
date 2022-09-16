@@ -434,7 +434,8 @@ class Tez:
     def predict(self, dataset, **kwargs):
 
         self.model_state = enums.ModelState.TEST
-        self._init_driver()
+        if self._driver is None:
+            self._init_driver()
 
         if "sampler" in kwargs:
             sampler = kwargs["sampler"]

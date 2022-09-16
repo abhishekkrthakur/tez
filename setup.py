@@ -6,9 +6,9 @@ with open("README.md") as f:
 
 
 INSTALL_REQUIRES = [
-    "loguru==0.6.0",
-    "accelerate==0.10.0",
-    "tqdm==4.64.0",
+    "loguru>=0.6.0",
+    "accelerate>=0.12.0",
+    "tqdm>=4.64.0",
 ]
 
 
