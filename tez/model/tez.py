@@ -18,6 +18,9 @@ from .config import TezConfig
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
+class OptimizerError(Exception):
+    pass
+
 
 @dataclass
 class Tez:
@@ -90,12 +93,12 @@ class Tez:
         self._init_driver()
 
         # parse args
-        self.train_loader = kwargs.get("train_loader", None)
-        self.valid_loader = kwargs.get("valid_loader", None)
-        self.train_sampler = kwargs.get("train_sampler", None)
-        self.valid_sampler = kwargs.get("valid_sampler", None)
-        self.train_collate_fn = kwargs.get("train_collate_fn", None)
-        self.valid_collate_fn = kwargs.get("valid_collate_fn", None)
+        self.train_loader = kwargs.get("train_loader")
+        self.valid_loader = kwargs.get("valid_loader")
+        self.train_sampler = kwargs.get("train_sampler")
+        self.valid_sampler = kwargs.get("valid_sampler")
+        self.train_collate_fn = kwargs.get("train_collate_fn")
+        self.valid_collate_fn = kwargs.get("valid_collate_fn")
 
         if self.config.num_jobs == -1:
             self.config.num_jobs = multiprocessing.cpu_count()
@@ -114,33 +117,32 @@ class Tez:
                 pin_memory=self.config.pin_memory,
             )
 
-        if self.valid_loader is None:
-            if self.valid_dataset is not None:
-                self.valid_loader = DataLoader(
-                    self.valid_dataset,
-                    batch_size=self.config.validation_batch_size,
-                    num_workers=self.config.num_jobs,
-                    sampler=self.valid_sampler,
-                    shuffle=self.config.valid_shuffle,
-                    collate_fn=self.valid_collate_fn,
-                    drop_last=self.config.valid_drop_last,
-                    pin_memory=self.config.pin_memory,
-                )
+        if self.valid_loader is None and self.valid_dataset is not None:
+            self.valid_loader = DataLoader(
+                self.valid_dataset,
+                batch_size=self.config.validation_batch_size,
+                num_workers=self.config.num_jobs,
+                sampler=self.valid_sampler,
+                shuffle=self.config.valid_shuffle,
+                collate_fn=self.valid_collate_fn,
+                drop_last=self.config.valid_drop_last,
+                pin_memory=self.config.pin_memory,
+            )
 
         self.optimizer, self.scheduler = self.model.optimizer_scheduler()
 
         if self.optimizer is None:
-            raise Exception("No optimizer found")
+            raise OptimizerError("No optimizer found")
 
         if self.valid_loader is not None and self.scheduler is not None:
             self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.valid_loader, self.scheduler
             )
-        elif self.valid_loader is not None and self.scheduler is None:
+        elif self.valid_loader is not None:
             self.model, self.optimizer, self.train_loader, self.valid_loader = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.valid_loader
             )
-        elif self.valid_loader is None and self.scheduler is not None:
+        elif self.scheduler is not None:
             self.model, self.optimizer, self.train_loader, self.scheduler = self._driver.prepare(
                 self.model, self.optimizer, self.train_loader, self.scheduler
             )
@@ -150,11 +152,7 @@ class Tez:
             )
 
         self.num_train_steps = int(len(self.train_loader) * self.config.epochs)
-        if self.valid_dataset:
-            self.num_valid_steps = len(self.valid_loader)
-        else:
-            self.num_valid_steps = None
-
+        self.num_valid_steps = len(self.valid_loader) if self.valid_dataset else None
         self._progress = Progress(num_train_steps=self.num_train_steps, num_valid_steps=self.num_valid_steps)
 
         if "callbacks" in kwargs:
@@ -180,9 +178,8 @@ class Tez:
     @train_state.setter
     def train_state(self, value):
         self._train_state = value
-        if self._callback_runner is not None:
-            if self._driver.is_local_main_process:
-                self._callback_runner(value)
+        if self._callback_runner is not None and self._driver.is_local_main_process:
+            self._callback_runner(value)
 
     def name_to_metric(self, metric_name):
         if metric_name == "current_epoch":
@@ -218,11 +215,7 @@ class Tez:
         else:
             sch_state_dict = None
 
-        model_dict = {}
-        model_dict["state_dict"] = model_state_dict
-        model_dict["optimizer"] = opt_state_dict
-        model_dict["scheduler"] = sch_state_dict
-        model_dict["config"] = self.config
+        model_dict = {"state_dict": model_state_dict, "optimizer": opt_state_dict, "scheduler": sch_state_dict, "config": self.config}
 
         if self._driver.is_main_process:
             self._driver.save(
@@ -231,11 +224,7 @@ class Tez:
             )
 
     def load(self, model_path, weights_only=False, config: TezConfig = None):
-        if config is None:
-            self.config = TezConfig()
-        else:
-            self.config = config
-
+        self.config = TezConfig() if config is None else config
         if self._driver is None:
             self._init_driver()
 
@@ -267,13 +256,12 @@ class Tez:
     def _step(self):
         self.optimizer.step()
 
-        if self.scheduler is not None:
-            if self.config.step_scheduler_after == "batch":
-                if self.config.step_scheduler_metric is None:
-                    self.scheduler.step()
-                else:
-                    step_metric = self.name_to_metric(self.config.step_scheduler_metric)
-                    self.scheduler.step(step_metric)
+        if self.scheduler is not None and self.config.step_scheduler_after == "batch":
+            if self.config.step_scheduler_metric is None:
+                self.scheduler.step()
+            else:
+                step_metric = self.name_to_metric(self.config.step_scheduler_metric)
+                self.scheduler.step(step_metric)
 
     def train_step(self, data):
         # self._zero_grad()
@@ -362,9 +350,8 @@ class Tez:
             losses, monitor = self._update_loss_metrics(losses, loss, metrics)
             self.train_state = enums.TrainingState.TRAIN_STEP_END
 
-            if self.valid_loader and self.config.val_strategy == "batch":
-                if self._train_step % self.config.val_steps == 0 or self._train_step == self.num_train_steps:
-                    self.validate(self.valid_loader)
+            if self.valid_loader and self.config.val_strategy == "batch" and (self._train_step % self.config.val_steps == 0 or self._train_step == self.num_train_steps):
+                self.validate(self.valid_loader)
 
             if self._model_state == enums.ModelState.END:
                 break
@@ -402,13 +389,12 @@ class Tez:
         self._set_validation_epoch_end(losses, monitor)
 
     def _step_scheduler_after_epoch(self):
-        if self.scheduler is not None:
-            if self.config.step_scheduler_after == "epoch":
-                if self.config.step_scheduler_metric is None:
-                    self.scheduler.step()
-                else:
-                    step_metric = self.name_to_metric(self.config.step_scheduler_metric)
-                    self.scheduler.step(step_metric)
+        if self.scheduler is not None and self.config.step_scheduler_after == "epoch":
+            if self.config.step_scheduler_metric is None:
+                self.scheduler.step()
+            else:
+                step_metric = self.name_to_metric(self.config.step_scheduler_metric)
+                self.scheduler.step(step_metric)
 
     def fit(self, train_dataset, valid_dataset=None, config: TezConfig = None, **kwargs):
         if config is None:
@@ -437,31 +423,11 @@ class Tez:
         if self._driver is None:
             self._init_driver()
 
-        if "sampler" in kwargs:
-            sampler = kwargs["sampler"]
-        else:
-            sampler = None
-
-        if "collate_fn" in kwargs:
-            collate_fn = kwargs["collate_fn"]
-        else:
-            collate_fn = None
-
-        if "batch_size" in kwargs:
-            batch_size = kwargs["batch_size"]
-        else:
-            batch_size = self.config.test_batch_size
-
-        if "num_jobs" in kwargs:
-            num_jobs = kwargs["num_jobs"]
-        else:
-            num_jobs = self.config.num_jobs
-
-        if "pin_memory" in kwargs:
-            pin_memory = kwargs["pin_memory"]
-        else:
-            pin_memory = self.config.pin_memory
-
+        sampler = kwargs.get("sampler")
+        collate_fn = kwargs.get("collate_fn")
+        batch_size = kwargs.get("batch_size", self.config.test_batch_size)
+        num_jobs = kwargs.get("num_jobs", self.config.num_jobs)
+        pin_memory = kwargs.get("pin_memory", self.config.pin_memory)
         if num_jobs == -1:
             num_jobs = multiprocessing.cpu_count()
             if num_jobs > 4:
@@ -488,5 +454,4 @@ class Tez:
             with torch.no_grad():
                 out, _, _ = self.model_fn(data)
                 out = self._driver.gather(out)
-                out = self.process_output(out)
-                yield out
+                yield self.process_output(out)

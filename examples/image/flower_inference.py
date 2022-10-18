@@ -229,9 +229,7 @@ if __name__ == "__main__":
     model.load(model_path, weights_only=True, config=config)
 
     preds_iter = model.predict(test_dataset)
-    final_preds = []
-    for preds in preds_iter:
-        final_preds.append(preds)
+    final_preds = list(preds_iter)
     final_preds = np.vstack(final_preds)
     final_preds = np.argmax(final_preds, axis=1)
 

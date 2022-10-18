@@ -140,13 +140,8 @@ if __name__ == "__main__":
     )
 
     model = CatsDogsModel(num_classes=2)
-    es = EarlyStopping(
-        monitor="valid_f1",
-        model_path=os.path.join(MODEL_PATH, MODEL_NAME + ".bin"),
-        patience=7,
-        mode="max",
-        save_weights_only=True,
-    )
+    es = EarlyStopping(monitor="valid_f1", model_path=os.path.join(MODEL_PATH, f"{MODEL_NAME}.bin"), patience=7, mode="max", save_weights_only=True)
+
     model = Tez(model)
     config = TezConfig(
         training_batch_size=TRAIN_BATCH_SIZE,

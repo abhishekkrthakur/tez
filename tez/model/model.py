@@ -47,10 +47,7 @@ class Model(nn.Module):
         self.scaler = None
         self.accumulation_steps = 0
         self.batch_index = 0
-        self.metrics = {}
-        self.metrics["train"] = {}
-        self.metrics["valid"] = {}
-        self.metrics["test"] = {}
+        self.metrics = {"train": {}, "valid": {}, "test": {}}
         self.clip_grad_norm = None
         self.using_tpu = False
 
@@ -101,7 +98,7 @@ class Model(nn.Module):
     ):
 
         if callbacks is None:
-            callbacks = list()
+            callbacks = []
 
         if n_jobs == -1:
             n_jobs = psutil.cpu_count()
@@ -122,16 +119,15 @@ class Model(nn.Module):
                 shuffle=train_shuffle,
                 collate_fn=train_collate_fn,
             )
-        if self.valid_loader is None:
-            if valid_dataset is not None:
-                self.valid_loader = torch.utils.data.DataLoader(
-                    valid_dataset,
-                    batch_size=valid_bs,
-                    num_workers=n_jobs,
-                    sampler=valid_sampler,
-                    shuffle=valid_shuffle,
-                    collate_fn=valid_collate_fn,
-                )
+        if self.valid_loader is None and valid_dataset is not None:
+            self.valid_loader = torch.utils.data.DataLoader(
+                valid_dataset,
+                batch_size=valid_bs,
+                num_workers=n_jobs,
+                sampler=valid_sampler,
+                shuffle=valid_shuffle,
+                collate_fn=valid_collate_fn,
+            )
 
         if self.optimizer is None:
             self.optimizer = self.fetch_optimizer()
@@ -186,18 +182,16 @@ class Model(nn.Module):
             if self.fp16:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+            elif self.using_tpu:
+                xm.optimizer_step(self.optimizer, barrier=True)
             else:
-                if self.using_tpu:
-                    xm.optimizer_step(self.optimizer, barrier=True)
+                self.optimizer.step()
+            if self.scheduler and self.step_scheduler_after == "batch":
+                if self.step_scheduler_metric is None:
+                    self.scheduler.step()
                 else:
-                    self.optimizer.step()
-            if self.scheduler:
-                if self.step_scheduler_after == "batch":
-                    if self.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
+                    step_metric = self.name_to_metric(self.step_scheduler_metric)
+                    self.scheduler.step(step_metric)
             if self.batch_index > 0:
                 self.zero_grad()
         return loss, metrics
@@ -300,12 +294,10 @@ class Model(nn.Module):
         else:
             tk0 = tqdm(data_loader, total=len(data_loader))
 
-        for _, data in enumerate(tk0):
+        for data in tk0:
             with torch.no_grad():
                 out = self.predict_one_step(data)
-                out = self.process_output(out)
-                yield out
-
+                yield self.process_output(out)
             if not self.using_tpu:
                 tk0.set_postfix(stage="test")
 
@@ -328,12 +320,8 @@ class Model(nn.Module):
             sch_state_dict = self.scheduler.state_dict()
         else:
             sch_state_dict = None
-        model_dict = {}
-        model_dict["state_dict"] = model_state_dict
-        model_dict["optimizer"] = opt_state_dict
-        model_dict["scheduler"] = sch_state_dict
-        model_dict["epoch"] = self.current_epoch
-        model_dict["fp16"] = self.fp16
+        model_dict = {"state_dict": model_state_dict, "optimizer": opt_state_dict, "scheduler": sch_state_dict, "epoch": self.current_epoch, "fp16": self.fp16}
+
         if self.using_tpu:
             xm.save(model_dict, model_path)
         else:
@@ -343,9 +331,8 @@ class Model(nn.Module):
         if device == "tpu":
             if XLA_AVAILABLE is False:
                 raise RuntimeError("XLA is not available")
-            else:
-                self.using_tpu = True
-                device = xm.xla_device()
+            self.using_tpu = True
+            device = xm.xla_device()
         self.device = device
         if next(self.parameters()).device != self.device:
             self.to(self.device)
@@ -355,6 +342,7 @@ class Model(nn.Module):
         else:
             self.load_state_dict(model_dict["state_dict"])
 
+    # TODO: try to reduce the number of arguments to this function to 13 or lower...
     def fit(
         self,
         train_dataset,
@@ -374,7 +362,7 @@ class Model(nn.Module):
         valid_shuffle=False,
         accumulation_steps=1,
         clip_grad_norm=None,
-    ):
+    ):  # sourcery skip: low-code-quality
         print(
             "NOTE: This is old Model class and is deprecated. It will no longer be maintained! Please use version > 0.5.1. Its much better and supports multi-gpu training too!"
         )
@@ -386,10 +374,9 @@ class Model(nn.Module):
         if device == "tpu":
             if XLA_AVAILABLE is False:
                 raise RuntimeError("XLA is not available. Please install pytorch_xla")
-            else:
-                self.using_tpu = True
-                fp16 = False
-                device = xm.xla_device()
+            self.using_tpu = True
+            fp16 = False
+            device = xm.xla_device()
         self._init_model(
             device=device,
             train_dataset=train_dataset,
@@ -418,13 +405,12 @@ class Model(nn.Module):
                 self.train_state = enums.TrainingState.VALID_EPOCH_START
                 valid_loss = self.validate_one_epoch(self.valid_loader)
                 self.train_state = enums.TrainingState.VALID_EPOCH_END
-            if self.scheduler:
-                if self.step_scheduler_after == "epoch":
-                    if self.step_scheduler_metric is None:
-                        self.scheduler.step()
-                    else:
-                        step_metric = self.name_to_metric(self.step_scheduler_metric)
-                        self.scheduler.step(step_metric)
+            if self.scheduler and self.step_scheduler_after == "epoch":
+                if self.step_scheduler_metric is None:
+                    self.scheduler.step()
+                else:
+                    step_metric = self.name_to_metric(self.step_scheduler_metric)
+                    self.scheduler.step(step_metric)
             self.train_state = enums.TrainingState.EPOCH_END
             if self._model_state.value == "end":
                 break

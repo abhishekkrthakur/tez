@@ -22,9 +22,7 @@ class Progress(Callback):
 
     def format_metrics(self, metrics, stage):
         metrics_str = ", ".join(["{}={:.4f}".format(k, v) for k, v in metrics.items() if k not in ("epoch", "steps")])
-        if stage == "train":
-            return f"[{stage}] {metrics_str}"
-        elif stage == "valid":
+        if stage in ["train", "valid"]:
             return f"[{stage}] {metrics_str}"
         else:
             raise ValueError(f"Unknown stage: {stage}")

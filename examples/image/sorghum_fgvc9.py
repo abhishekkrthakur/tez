@@ -233,9 +233,8 @@ if __name__ == "__main__":
     model.load(os.path.join(args.output, "model.bin"), weights_only=True, config=config)
 
     preds_iter = model.predict(test_dataset)
-    final_preds = []
-    for preds in tqdm(preds_iter, total=(len(test_dataset) / (2 * args.batch_size))):
-        final_preds.append(preds)
+    final_preds = list(tqdm(preds_iter, total=(len(test_dataset) / (2 * args.batch_size))))
+
     final_preds = np.vstack(final_preds)
     final_preds = np.argmax(final_preds, axis=1)
 

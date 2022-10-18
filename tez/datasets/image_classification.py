@@ -6,6 +6,8 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+class BackendError(Exception):
+    pass
 
 class ImageDataset:
     def __init__(
@@ -50,7 +52,7 @@ class ImageDataset:
                 augmented = self.augmentations(image=image)
                 image = augmented["image"]
         else:
-            raise Exception("Backend not implemented")
+            raise BackendError("Backend not implemented")
         if self.channel_first is True and self.grayscale is False:
             image = np.transpose(image, (2, 0, 1)).astype(np.float32)
 

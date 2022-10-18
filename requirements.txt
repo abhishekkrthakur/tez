@@ -1,0 +1,9 @@
+torch
+accelerate
+psutil
+tqdm
+opencv-python
+numpy
+Pillow
+loguru
+setuptools
