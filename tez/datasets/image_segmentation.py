@@ -26,9 +26,12 @@ class RCNNDataset:
         return len(self.image_paths)
 
     def __getitem__(self, item):
-        # image = Image.open(self.image_paths[item])
-        image = cv2.imread(self.image_paths[item])
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        try:
+            image = cv2.imread(self.image_paths[item])
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        except Exception:
+            from PIL import Image
+            image = Image.open(self.image_paths[item])
         bboxes = self.bounding_boxes[item]
         image = np.array(image)
         if self.augmentations is not None:

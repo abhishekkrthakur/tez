@@ -37,9 +37,7 @@ def parse_args():
 
 
 def format_prediction_string(boxes, scores):
-    pred_strings = []
-    for j in zip(scores, boxes):
-        pred_strings.append("{0:.4f} {1} {2} {3} {4}".format(j[0], j[1][0], j[1][1], j[1][2], j[1][3]))
+    pred_strings = ["{0:.4f} {1} {2} {3} {4}".format(j[0], j[1][0], j[1][1], j[1][2], j[1][3]) for j in zip(scores, boxes)]
 
     return " ".join(pred_strings)
 
@@ -133,10 +131,7 @@ class WheatModel(nn.Module):
 
     def forward(self, images, targets):
         outputs = self.base_model(images, targets)
-        if targets is not None:
-            loss = outputs["loss"]
-            return outputs, loss, {}
-        return outputs, 0, {}
+        return (outputs, 0, {}) if targets is None else (outputs, outputs["loss"], {})
 
 
 class TezEfficientDet(Tez):
@@ -145,7 +140,7 @@ class TezEfficientDet(Tez):
 
     def model_fn(self, data):
         images, targets = data
-        images = list(image.to(self.config.device) for image in images)
+        images = [image.to(self.config.device) for image in images]
         images = torch.stack(images)
         images = images.float()
         targets = [{k: v.to(self.config.device) for k, v in t.items()} for t in targets]
