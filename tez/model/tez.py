@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from torch.utils.data import DataLoader
 
 from tez import enums
@@ -65,6 +65,8 @@ class Tez:
     metrics["test"] = {}
     _progress = None
 
+    find_unused_parameters = False
+
     def _init_driver(self):
         if self.config.fp16 is True and self.config.bf16 is True:
             raise ValueError("Only one of fp16 and bf16 can be True")
@@ -75,11 +77,17 @@ class Tez:
             mixed_precision = "bf16"
         else:
             mixed_precision = "no"
+
+        kwargs_handlers = None
+        if self.find_unused_parameters:
+            kwargs_handlers = [DistributedDataParallelKwargs(find_unused_parameters=True)]
+            
         self._driver = Accelerator(
             device_placement=True,
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            kwargs_handlers=kwargs_handlers
         )
         self.config.device = self._driver.device
 
