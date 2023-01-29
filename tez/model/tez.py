@@ -38,6 +38,8 @@ class Tez:
     num_train_steps: Optional[int] = None
     num_valid_steps: Optional[int] = None
 
+    find_unused_parameters: Optional[bool] = False
+
     # internals
     current_epoch = 0
     train_batch_index = 0
@@ -65,8 +67,6 @@ class Tez:
     metrics["test"] = {}
     _progress = None
 
-    find_unused_parameters = False
-
     def _init_driver(self):
         if self.config.fp16 is True and self.config.bf16 is True:
             raise ValueError("Only one of fp16 and bf16 can be True")
@@ -81,7 +81,7 @@ class Tez:
         kwargs_handlers = None
         if self.find_unused_parameters:
             kwargs_handlers = [DistributedDataParallelKwargs(find_unused_parameters=True)]
-            
+
         self._driver = Accelerator(
             device_placement=True,
             step_scheduler_with_optimizer=False,
