@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from torch.utils.data import DataLoader
 
 from tez import enums
@@ -37,6 +37,8 @@ class Tez:
     num_gpu: Optional[int] = 0
     num_train_steps: Optional[int] = None
     num_valid_steps: Optional[int] = None
+
+    find_unused_parameters: Optional[bool] = False
 
     # internals
     current_epoch = 0
@@ -75,11 +77,17 @@ class Tez:
             mixed_precision = "bf16"
         else:
             mixed_precision = "no"
+
+        kwargs_handlers = None
+        if self.find_unused_parameters:
+            kwargs_handlers = [DistributedDataParallelKwargs(find_unused_parameters=True)]
+
         self._driver = Accelerator(
             device_placement=True,
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            kwargs_handlers=kwargs_handlers
         )
         self.config.device = self._driver.device
 
